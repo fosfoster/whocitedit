@@ -22,6 +22,7 @@ from pathlib import Path
 
 import graph
 import identity
+import quality
 from db import DB_PATH, connect, set_meta
 from licensing import abstract_decision
 from openalex import short_id
@@ -248,6 +249,30 @@ def _insert_citations(conn, references: dict[str, list[str]]) -> int:
     return conn.execute("SELECT COUNT(*) c FROM citation").fetchone()["c"]
 
 
+def score_quality(conn) -> dict[str, int]:
+    """Flag work records that contradict themselves. Nothing is deleted."""
+    bands = {quality.COMPLETE: 0, quality.PARTIAL: 0, quality.SUSPECT: 0}
+    for row in conn.execute(
+        "SELECT w.id, w.title, w.doi, w.year, w.referenced_count, w.cited_by_count,"
+        "       (SELECT COUNT(*) FROM authorship a WHERE a.work_id = w.id) AS n_authors"
+        "  FROM work w"
+    ):
+        band, evidence = quality.assess(
+            title=row["title"],
+            doi=row["doi"],
+            year=row["year"],
+            n_authors=row["n_authors"],
+            referenced_count=row["referenced_count"],
+            cited_by_count=row["cited_by_count"],
+        )
+        bands[band] += 1
+        conn.execute(
+            "UPDATE work SET quality = ?, quality_evidence = ? WHERE id = ?",
+            (band, quality.encode_evidence(evidence), row["id"]),
+        )
+    return bands
+
+
 def score_identities(conn) -> dict[str, int]:
     bands = {identity.HIGH: 0, identity.MEDIUM: 0, identity.LOW: 0}
     for row in conn.execute("SELECT id, orcid FROM author"):
@@ -312,12 +337,16 @@ def main() -> int:
     edges = graph.build_coauthorship(conn, now_year)
     print(f"   {edges} weighted edges")
 
+    print("== work record quality")
+    wbands = score_quality(conn)
+    print(f"   complete={wbands['complete']} partial={wbands['partial']} suspect={wbands['suspect']}")
+
     print("== identity confidence")
     bands = score_identities(conn)
     print(f"   high={bands['high']} medium={bands['medium']} low={bands['low']}")
 
     set_meta(conn, "derived_at", datetime.now(timezone.utc).isoformat(timespec="seconds"))
-    set_meta(conn, "stats", {**stats, "coauthor_edges": edges, "identity": bands})
+    set_meta(conn, "stats", {**stats, "coauthor_edges": edges, "identity": bands, "quality": wbands})
     conn.commit()
     print(f"== wrote {DB_PATH.name}")
     return 0

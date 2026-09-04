@@ -188,9 +188,19 @@ def svg_graph(g: dict, href: dict[str, str], caption: str) -> str:
         text = ""
         if n["id"] in labels:
             ly, short = labels[n["id"]]
+            # A centred label on a node near the edge runs outside the viewBox
+            # and is clipped mid-word. Anchor inward once the box would cross a
+            # boundary; the placement pass above already reserved the space.
+            half = len(short) * 2.7
+            if x - half < 4:
+                anchor, lx = "start", 4
+            elif x + half > g["width"] - 4:
+                anchor, lx = "end", g["width"] - 4
+            else:
+                anchor, lx = "middle", x
             text = (
-                f'<text class="node-label" x="{x}" y="{ly:.1f}" '
-                f'text-anchor="middle">{e(short)}</text>'
+                f'<text class="node-label" x="{lx}" y="{ly:.1f}" '
+                f'text-anchor="{anchor}">{e(short)}</text>'
             )
         inner = f'<circle r="{r:.1f}" cx="{x}" cy="{y}"><title>{e(tip)}</title></circle>{text}'
         nodes.append(
@@ -210,6 +220,17 @@ def svg_graph(g: dict, href: dict[str, str], caption: str) -> str:
 
 # -- evidence -------------------------------------------------------------
 
+def badge(band, hide=None) -> str:
+    """A band chip, or nothing when the band is the unremarkable one.
+
+    A table where every row reads "complete" carries no information; the column
+    is there to make the exceptions findable at a glance.
+    """
+    if not band or band == hide:
+        return ""
+    return '<span class="badge %s">%s</span>' % (e(band), e(band))
+
+
 def evidence_html(evidence: list[dict], notes: dict) -> str:
     rows = []
     for item in evidence:
@@ -219,7 +240,12 @@ def evidence_html(evidence: list[dict], notes: dict) -> str:
         if template:
             pct = f"{value:.0%}" if isinstance(value, float) else ""
             n = len(value) if isinstance(value, list) else value
-            text = template.format(value=value, n=n, pct=pct)
+            text = template.format(
+                value=num(value) if isinstance(value, int) else value,
+                n=n,
+                pct=pct,
+                doi_year=item.get("doi_year", ""),
+            )
         else:
             text = f"{signal}: {value}"
         rows.append(
@@ -255,8 +281,10 @@ def neighbour_list(w: dict, kind: str, heading: str) -> str:
 </table></div>"""
 
 
-def render_work(w: dict, authors: dict, titles: dict, payloads: dict) -> str:
+def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
+                quality_notes: dict) -> str:
     wid = w["id"]
+    q = w["quality"]
     authors_html = ", ".join(
         f'<a href="../../a/{e(a["id"])}/">{e(a["name"])}</a>'
         + (f' <span class="badge low" title="identity confidence">low</span>' if a.get("confidence") == "low" else "")
@@ -321,6 +349,12 @@ def render_work(w: dict, authors: dict, titles: dict, payloads: dict) -> str:
   <div class="panel">
     <h2>Topics</h2>
     <table>{rows or '<tr><td class="faint">None recorded.</td></tr>'}</table>
+  </div>
+  <div class="panel">
+    <h2>Is this record sound?</h2>
+    <p><span class="badge {q["band"]}">{q["band"]}</span></p>
+    <p>{e(q["sentence"])}</p>
+    {evidence_html(q["evidence"], quality_notes)}
   </div>
   <div class="panel">
     <h2>Provenance</h2>
@@ -429,6 +463,7 @@ def render_home(corpus: dict, works: list, authors: list) -> str:
         for w in works[:40]
     )
     ident = corpus["identity"]
+    q = corpus["quality"]
     low_pct = ident["low"] / max(sum(ident.values()), 1)
     body = f"""
 <h1>{TAGLINE}</h1>
@@ -450,7 +485,8 @@ def render_home(corpus: dict, works: list, authors: list) -> str:
      committed to the repository as <span class="mono">corpus.json</span>, so
      &ldquo;why is this paper here and not that one&rdquo; has a diffable answer.
      {num(c['works'])} is where this starts, not the shape of the thing.</p>
-  <p><b>{low_pct:.0%} of author records here are marked low confidence.</b> Author
+  <p><b>{low_pct:.0%} of author records here are marked low confidence, and
+     {num(q["suspect"])} of {num(c["works"])} paper records contradict themselves.</b> Author
      identity in every open bibliographic database is produced by an algorithm that
      splits one researcher across several records and merges several researchers
      into one. We do not fix that silently. Each author page states how confident
@@ -470,10 +506,12 @@ def render_home(corpus: dict, works: list, authors: list) -> str:
 
 def render_browse(kind: str, rows: list, corpus: dict) -> str:
     if kind == "works":
-        head = '<tr><th>Paper</th><th class="num">Year</th><th class="num">Cited</th><th class="num">In corpus</th></tr>'
+        head = ('<tr><th>Paper</th><th>Record</th><th class="num">Year</th>'
+                '<th class="num">Cited</th><th class="num">In corpus</th></tr>')
         body_rows = "".join(
             f'<tr><td><a href="../w/{e(r["id"])}/">{e(r["title"])}</a>'
             f'<br><span class="meta faint">{e(", ".join(r["authors"]))}</span></td>'
+            f'<td>{badge(r.get("quality"), hide="complete")}</td>' 
             f'<td class="num">{e(r["year"] or "")}</td><td class="num">{num(r["cited"])}</td>'
             f'<td class="num">{num(r["in_corpus_cited"])}</td></tr>'
             for r in rows[:400]
@@ -565,6 +603,27 @@ def render_methodology(corpus: dict) -> str:
 </div>
 
 <div class="panel">
+<h2>Paper records get the same treatment</h2>
+<p>A work record can contradict itself, and in this corpus a surprising number do.
+   We check four things that need no second source to verify: whether the record
+   lists any authors at all, whether it records references behind a large citation
+   count, whether the year embedded in its DOI agrees with its own publication
+   year, and whether it has a title.</p>
+<p class="meta">{num(corpus["quality"]["complete"])} complete &middot;
+   {num(corpus["quality"]["partial"])} partial &middot;
+   {num(corpus["quality"]["suspect"])} suspect.</p>
+<p><b>Deliberately not checked: whether a citation count is implausible.</b>
+   This corpus is selected by citation count, so every work in it is an outlier
+   against the wider population, and a threshold fitted here would be fitted to
+   the selection rather than to the data. Calling a number wrong needs evidence
+   this tier does not carry.</p>
+<p>Nothing is deleted or corrected. A record flagged
+   <span class="badge suspect">suspect</span> stays on the site with its figures
+   intact and a panel saying what is wrong with it &mdash; silently fixing a
+   source is how a reader ends up trusting a number nobody can trace.</p>
+</div>
+
+<div class="panel">
 <h2>Why some abstracts are missing</h2>
 <p>An abstract present in a source record is not permission to republish it.
    Publishers have had abstracts removed from open indexes in bulk &mdash; Springer
@@ -611,6 +670,7 @@ def main() -> int:
     payloads = load("payloads.json")
     notes = corpus["identity_notes"]
     bands = corpus["identity_bands"]
+    quality_notes = corpus["quality_notes"]
 
     if SITE.exists():
         shutil.rmtree(SITE)
@@ -624,7 +684,10 @@ def main() -> int:
 
     for shard in sorted((DATA / "works").glob("*.json")):
         for wid, w in json.loads(shard.read_text()).items():
-            total += write(f"w/{wid}/index.html", render_work(w, author_names, titles, payloads))
+            total += write(
+                f"w/{wid}/index.html",
+                render_work(w, author_names, titles, payloads, quality_notes),
+            )
             n += 1
 
     for shard in sorted((DATA / "authors").glob("*.json")):

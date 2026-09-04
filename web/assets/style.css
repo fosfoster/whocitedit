@@ -127,3 +127,10 @@ input[type=search] {
 .hits a { display: block; padding: 7px 0; border-bottom: 1px solid var(--rule); text-decoration: none; color: var(--ink); font-size: 14px; }
 .hits a:hover { color: var(--accent); }
 .hits small { color: var(--ink-faint); }
+
+/* Work-record quality reuses the confidence colours: the two bands say the same
+   kind of thing about different rows, and giving them separate palettes would
+   imply a distinction that is not there. */
+.badge.complete { color: var(--high); }
+.badge.partial { color: var(--medium); }
+.badge.suspect { color: var(--low); }
