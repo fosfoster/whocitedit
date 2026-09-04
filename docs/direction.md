@@ -50,6 +50,23 @@ Shared work count is not the ranking. Weight multiplies team size
 and recency (ten-year half-life). This is a claim about what collaboration
 means; `/methodology` states it so a reader can disagree.
 
+## The renderer is Python and the interactivity is islands over it
+
+Revised 2026-09-04, when React was added. The rule did not change: **the path
+that renders and publishes the site has no Node in it.** `web/app/` is a Vite +
+React source tree that compiles to ONE bundle, committed at
+`web/assets/islands.js`. `render.py` emits the finished SVG, the mount point and
+the graph payload; `islands.js` mounts over the figure and only then hides the
+static SVG, so a failed bundle, a slow network or JavaScript switched off leaves
+the page exactly as it was.
+
+What the gate checks is staleness, not the build: `tools/bundle_hash.py` hashes
+`web/app/src` and compares it to a stamp committed beside the bundle. No Node,
+no npm, no network. A separate non-gating `app` job in CI does the clean rebuild
+and asserts the committed bundle reproduces.
+
+The original reasoning, which still holds:
+
 ## The renderer is Python, and that is deliberate
 
 Two measured reasons, both recorded here so the decision is not re-litigated:
@@ -66,9 +83,9 @@ Two measured reasons, both recorded here so the decision is not re-litigated:
    dependency tree cannot have that failure, and the gate then runs identically
    on a Linux host, a Mac host and a GitHub runner.
 
-What this gives up is a component model and client-side routing. This site needs
-neither: every page is precomputed and the only interactivity is a search box
-over an index file.
+What this gives up is server-side React and client-side routing. This site needs
+neither: every page is precomputed, and the interactivity that is worth having
+is per-figure rather than per-page, which is what islands are for.
 
 ## Known upstream data defects, not our bugs
 

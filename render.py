@@ -72,7 +72,8 @@ def load(name: str):
 
 # -- chrome ---------------------------------------------------------------
 
-def page(*, title: str, description: str, body: str, path: str, extra_head: str = "") -> str:
+def page(*, title: str, description: str, body: str, path: str, extra_head: str = "",
+         island: bool = False) -> str:
     canonical = f"{SITE_URL}/{path}".rstrip("/") or SITE_URL
     depth = path.count("/")
     root = "../" * depth or "./"
@@ -102,6 +103,7 @@ def page(*, title: str, description: str, body: str, path: str, extra_head: str 
 <main class="wrap">
 {body}
 </main>
+{'<script src="' + root + 'assets/islands.js" defer></script>' if island else ''}
 <footer class="site"><div class="wrap">
   <p>Built from <a href="https://openalex.org">OpenAlex</a>, which publishes its data under CC0.
      Every figure on this site links to the stored payload it came from.
@@ -121,7 +123,9 @@ def write(path: str, content: str) -> int:
 
 # -- graph ----------------------------------------------------------------
 
-def svg_graph(g: dict, href: dict[str, str], caption: str) -> str:
+def svg_graph(g: dict, href: dict[str, str], caption: str,
+              *, kind: str = "citation", focus: str = "",
+              href_prefix: str = "../") -> str:
     """Inline SVG from coordinates solved at export time.
 
     No <script>: the graph is in the markup, so it renders with JavaScript off,
@@ -209,11 +213,23 @@ def svg_graph(g: dict, href: dict[str, str], caption: str) -> str:
             else f'<g class="node {n["kind"]}">{inner}</g>'
         )
 
-    return f"""<figure class="graph">
+    # THE STATIC SVG IS THE PAGE; THE ISLAND IS AN UPGRADE. It ships in the
+    # markup, so the graph is in what a crawler reads, renders with JavaScript
+    # off, and is identical for every reader. `islands.js` mounts over it and
+    # only then hides it -- a failed bundle leaves the page exactly as it was.
+    payload = dict(g, kind=kind, focus=focus, href_prefix=href_prefix)
+    # `</script>` inside a JSON string ends the block early; escaping the angle
+    # bracket is the whole fix and JSON parsers read \u003c back as `<`.
+    blob = json.dumps(payload, separators=(",", ":")).replace("<", "\\u003c")
+    return f"""<figure class="graph" data-island="{kind}">
+<div class="static-graph">
 <svg viewBox="0 0 {g['width']} {g['height']}" role="img" aria-label="{e(caption)}" preserveAspectRatio="xMidYMid meet">
 <g>{''.join(lines)}</g>
 <g>{''.join(nodes)}</g>
 </svg>
+</div>
+<div class="island-mount"></div>
+<script type="application/json" class="graph-data">{blob}</script>
 <figcaption>{caption}</figcaption>
 </figure>"""
 
@@ -281,6 +297,87 @@ def neighbour_list(w: dict, kind: str, heading: str) -> str:
 </table></div>"""
 
 
+def bar_chart(pairs: list[tuple[int, int]], *, label: str, width: int = 980, height: int = 200) -> str:
+    """Works per publication year. One series, so no legend -- the heading names it.
+
+    Deliberately not a line: these are counts in discrete year buckets, not a
+    continuous quantity sampled over time, and a line would draw slopes between
+    years that mean nothing.
+    """
+    if not pairs:
+        return ""
+    pad_l, pad_b, pad_t = 4, 20, 14
+    plot_h = height - pad_b - pad_t
+    top = max(v for _, v in pairs) or 1
+    # A 2px gap between bars, so adjacent years stay countable.
+    slot = (width - pad_l * 2) / len(pairs)
+    bw = max(slot - 2, 1.5)
+    peak_year = max(pairs, key=lambda p: p[1])[0]
+    bars, labels = [], []
+    for i, (year, count) in enumerate(pairs):
+        h = max((count / top) * plot_h, 1.5)
+        x = pad_l + i * slot
+        y = pad_t + plot_h - h
+        # 4px rounded data-end, square on the baseline it is anchored to.
+        r = min(4, bw / 2, h)
+        bars.append(
+            f'<path class="bar" d="M{x:.1f},{pad_t + plot_h:.1f} V{y + r:.1f} '
+            f'q0,{-r:.1f} {r:.1f},{-r:.1f} h{bw - 2 * r:.1f} q{r:.1f},0 {r:.1f},{r:.1f} '
+            f'V{pad_t + plot_h:.1f} Z">'
+            f'<title>{year}: {num(count)} work(s)</title></path>'
+        )
+        # Direct labels only where they carry information: the two ends and the
+        # peak. A number over every bar is noise, not annotation.
+        if year in (pairs[0][0], pairs[-1][0], peak_year):
+            labels.append(
+                f'<text x="{x + bw / 2:.1f}" y="{height - 6}" text-anchor="middle">{year}</text>'
+            )
+            if year == peak_year:
+                labels.append(
+                    f'<text x="{x + bw / 2:.1f}" y="{y - 4:.1f}" text-anchor="middle">{num(count)}</text>'
+                )
+    return f'''<figure class="chart">
+<p class="chart-title">{e(label)}</p>
+<svg viewBox="0 0 {width} {height}" role="img" aria-label="{e(label)}">
+  <g>{"".join(bars)}</g>
+  <g class="axis">
+    <line x1="{pad_l}" y1="{pad_t + plot_h}" x2="{width - pad_l}" y2="{pad_t + plot_h}"/>
+    {"".join(labels)}
+  </g>
+</svg>
+</figure>'''
+
+
+def stacked_bar(segments: list[tuple[str, int, str]], *, label: str, width: int = 470) -> str:
+    """A 100% bar for a three-way split, with every segment directly labelled.
+
+    Status colours, not series colours -- and each one carries its own word, so
+    the colour never has to be read on its own.
+    """
+    total = sum(v for _, v, _ in segments) or 1
+    height, gap = 30, 2
+    x = 0.0
+    rects, legend = [], []
+    usable = width - gap * (len(segments) - 1)
+    for name, value, tone in segments:
+        w = max((value / total) * usable, 2)
+        rects.append(
+            f'<rect class="seg-{tone}" x="{x:.1f}" y="0" width="{w:.1f}" height="{height}" rx="3">'
+            f'<title>{e(name)}: {num(value)} ({value / total:.0%})</title></rect>'
+        )
+        legend.append(
+            f'<span><i class="legend-{tone}"></i>{e(name)} <b>{num(value)}</b> '
+            f'<span class="faint">{value / total:.0%}</span></span>'
+        )
+        x += w + gap
+    return f'''<figure class="chart">
+<p class="chart-title">{e(label)}</p>
+<svg viewBox="0 0 {width} {height}" role="img" aria-label="{e(label)}">{"".join(rects)}</svg>
+<div class="chart-legend">{"".join(legend)}</div>
+</figure>'''
+
+
+
 def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
                 quality_notes: dict) -> str:
     wid = w["id"]
@@ -307,8 +404,9 @@ def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
     href[wid] = ""
     graph_caption = (
         f'{w["graph"]["shown"]} of {w["graph"]["available"]} neighbouring works in this corpus. '
-        f'Green is what this paper cites; amber is what cites it. Only the largest '
-        f'labels are drawn \u2014 every node carries its full title on hover.'
+        f'Blue is what this paper cites; orange is what cites it, and a dashed line '
+        f'is one neighbour citing another. Only the largest labels are drawn '
+        f'\u2014 every node carries its full title on hover.'
     )
 
     prov = payloads.get(w.get("raw") or "", {})
@@ -331,7 +429,7 @@ def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
 <div class="grid two">
 <div>
   {abstract}
-  {svg_graph(w["graph"], href, graph_caption)}
+  {svg_graph(w["graph"], href, graph_caption, kind="citation", focus=wid, href_prefix="../")}
   <div class="legend">
     <span><i style="background:var(--focus)"></i>this paper</span>
     <span><i style="background:var(--ref)"></i>works it cites</span>
@@ -373,6 +471,7 @@ def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
         ),
         body=body,
         path=f"w/{wid}/",
+        island=True,
     )
 
 
@@ -410,7 +509,7 @@ def render_author(a: dict, notes: dict, bands: dict, payloads: dict) -> str:
 </p>
 <div class="grid two">
 <div>
-  {svg_graph(a["graph"], href, "Collaboration graph")}
+  {svg_graph(a["graph"], href, caption, kind="collaboration", focus=a["id"], href_prefix="../")}
   <div class="legend">
     <span><i style="background:var(--focus)"></i>{e(a["name"])}</span>
     <span><i style="background:var(--ref)"></i>collaborator</span>
@@ -449,6 +548,7 @@ def render_author(a: dict, notes: dict, bands: dict, payloads: dict) -> str:
         ),
         body=body,
         path=f"a/{a['id']}/",
+        island=True,
     )
 
 
@@ -464,6 +564,10 @@ def render_home(corpus: dict, works: list, authors: list) -> str:
     )
     ident = corpus["identity"]
     q = corpus["quality"]
+    year_counts: dict[int, int] = {}
+    for w in works:
+        if w["year"]:
+            year_counts[w["year"]] = year_counts.get(w["year"], 0) + 1
     low_pct = ident["low"] / max(sum(ident.values()), 1)
     body = f"""
 <h1>{TAGLINE}</h1>
@@ -493,6 +597,18 @@ def render_home(corpus: dict, works: list, authors: list) -> str:
      it is and shows you the signals, and nothing is ever merged away.
      <a href="methodology/">How that is judged</a>.</p>
 </div>
+<div class="grid two-even">
+{bar_chart(sorted(year_counts.items()), label=f"Works by publication year ({len(year_counts)} years)")}
+</div>
+<div class="grid two-even">
+{stacked_bar([("high", ident["high"], "good"), ("medium", ident["medium"], "warning"),
+              ("low", ident["low"], "critical")],
+             label="Is each author record one person?")}
+{stacked_bar([("complete", q["complete"], "good"), ("partial", q["partial"], "warning"),
+              ("suspect", q["suspect"], "critical")],
+             label="Does each paper record agree with itself?")}
+</div>
+
 <h2>Most cited</h2>
 <div class="scroll"><table>
   <thead><tr><th>Paper</th><th class="num">Year</th><th class="num">Cited</th><th class="num">In corpus</th></tr></thead>

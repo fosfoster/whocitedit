@@ -173,6 +173,22 @@ def work_graph(conn, wid: str, titles: dict[str, dict]) -> dict:
 
     node_ids = [wid] + keep_refs + keep_citers
     edges = [(c, wid, 1.0) for c in keep_citers] + [(wid, r, 1.0) for r in keep_refs]
+
+    # EDGES AMONG THE NEIGHBOURS, not only to the focus. Without these the graph
+    # is a star with the focus at the centre and every layout of it is a
+    # rosette: it can show you how many and how big, and nothing about how the
+    # neighbourhood is organised. With them, papers that cite each other pull
+    # together, and the clusters that appear are real lines of work.
+    inner = set(node_ids) - {wid}
+    if inner:
+        marks = ",".join("?" * len(inner))
+        rows = conn.execute(
+            f"SELECT citing_id, cited_id FROM citation "
+            f"WHERE citing_id IN ({marks}) AND cited_id IN ({marks})",
+            list(inner) + list(inner),
+        )
+        edges += [(r["citing_id"], r["cited_id"], 0.6) for r in rows]
+
     coords = graph.layout(node_ids, edges, seed=7, width=1000, height=640)
 
     def node(nid: str, kind: str) -> dict:
@@ -195,7 +211,10 @@ def work_graph(conn, wid: str, titles: dict[str, dict]) -> dict:
         "nodes": [node(wid, "focus")]
         + [node(n, "reference") for n in keep_refs]
         + [node(n, "citer") for n in keep_citers],
-        "edges": [{"s": s, "t": t} for s, t, _ in edges],
+        "edges": [
+            {"s": s, "t": t, **({"inner": True} if wid not in (s, t) else {})}
+            for s, t, _ in edges
+        ],
         "shown": len(node_ids) - 1,
         "available": total,
     }
