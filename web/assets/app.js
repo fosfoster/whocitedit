@@ -1,4 +1,4 @@
-/* Search over the index file the page names. The only JavaScript on this site:
+/* Search over the local index file the page names. The only JavaScript on this site:
    every page, every graph and every number is already in the HTML. */
 (function () {
   var box = document.getElementById("q");
@@ -6,6 +6,7 @@
   var hits = document.getElementById("hits");
   var table = document.getElementById("table");
   var kind = box.dataset.kind;
+  var route = { works: "w", authors: "a", institutions: "i", topics: "t" }[kind];
   var rows = null;
 
   function load() {
@@ -19,11 +20,14 @@
     if (!q) { hits.innerHTML = ""; table.hidden = false; return; }
     table.hidden = true;
     hits.innerHTML = matches.slice(0, 60).map(function (r) {
-      return kind === "works"
-        ? '<a href="../w/' + r.id + '/">' + esc(r.title) + " <small>" + (r.year || "") +
-          " &middot; " + r.cited.toLocaleString() + " cited</small></a>"
-        : '<a href="../a/' + r.id + '/">' + esc(r.name) + " <small>" + r.band +
-          " confidence &middot; " + r.works + " work(s)</small></a>";
+      var label = r.name || r.title || r.id;
+      var details;
+      if (kind === "works") details = (r.year || "") + " &middot; " + (r.cited || 0).toLocaleString() + " cited";
+      else if (kind === "authors") details = (r.band || "") + " confidence &middot; " + (r.works || 0) + " work(s)";
+      else if (kind === "institutions") details = (r.authors || 0) + " author(s) &middot; " + (r.works || 0) + " work(s)";
+      else details = (r.works || 0) + " work(s) &middot; " + (r.authors || 0) + " author(s)";
+      return '<a href="../' + route + '/' + encodeURIComponent(r.id) + '/">' + esc(label) +
+        " <small>" + details + "</small></a>";
     }).join("") || '<p class="faint">Nothing matches.</p>';
   }
 
@@ -41,7 +45,7 @@
       if (!q) return render([], "");
       load().then(function (all) {
         render(all.filter(function (r) {
-          return (kind === "works" ? r.title : r.name).toLowerCase().indexOf(q) >= 0;
+          return (r.title || r.name || r.id).toLowerCase().indexOf(q) >= 0;
         }), q);
       });
     }, 120);

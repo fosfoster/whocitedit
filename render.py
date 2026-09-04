@@ -70,6 +70,11 @@ def load(name: str):
     return json.loads((DATA / name).read_text())
 
 
+def load_optional(name: str, default):
+    path = DATA / name
+    return json.loads(path.read_text()) if path.exists() else default
+
+
 # -- chrome ---------------------------------------------------------------
 
 def page(*, title: str, description: str, body: str, path: str, extra_head: str = "",
@@ -97,6 +102,8 @@ def page(*, title: str, description: str, body: str, path: str, extra_head: str 
   <nav>
     <a href="{root}works/">Papers</a>
     <a href="{root}authors/">Authors</a>
+    <a href="{root}institutions/">Institutions</a>
+    <a href="{root}topics/">Topics</a>
     <a href="{root}methodology/">Methodology</a>
   </nav>
 </div></header>
@@ -133,7 +140,18 @@ def svg_graph(g: dict, href: dict[str, str], caption: str,
     """
     if not g or len(g.get("nodes") or []) < 2:
         return ""
-    pos = {n["id"]: (n["x"], n["y"]) for n in g["nodes"]}
+    # Exported institution nodes use `name` and omit the work-graph-only
+    # `kind`/`cited` fields. Normalize those optional fields here so the static
+    # renderer stays compatible with both graph payload shapes.
+    nodes_data = [
+        {
+            **n,
+            "label": n.get("label") or n.get("name") or n["id"],
+            "kind": n.get("kind") or ("focus" if n["id"] == focus else "coauthor"),
+        }
+        for n in (g.get("nodes") or [])
+    ]
+    pos = {n["id"]: (n["x"], n["y"]) for n in nodes_data}
     maxc = max((n.get("cited") or n.get("works") or 1) for n in g["nodes"]) or 1
 
     lines = []
@@ -157,7 +175,7 @@ def svg_graph(g: dict, href: dict[str, str], caption: str,
     # still in the markup a crawler reads.
     placed: list[tuple[float, float, float, float]] = []
     ordered = sorted(
-        g["nodes"],
+        nodes_data,
         key=lambda n: (n["kind"] != "focus", -(n.get("cited") or n.get("works") or 0)),
     )
     labels: dict[str, tuple[float, str]] = {}
@@ -179,7 +197,7 @@ def svg_graph(g: dict, href: dict[str, str], caption: str,
                 break
 
     nodes = []
-    for n in g["nodes"]:
+    for n in nodes_data:
         x, y = n["x"], n["y"]
         scale = (n.get("cited") or n.get("works") or 1) / maxc
         r = 11 if n["kind"] == "focus" else 5 + 11 * math.sqrt(max(scale, 0.0))
@@ -217,7 +235,7 @@ def svg_graph(g: dict, href: dict[str, str], caption: str,
     # markup, so the graph is in what a crawler reads, renders with JavaScript
     # off, and is identical for every reader. `islands.js` mounts over it and
     # only then hides it -- a failed bundle leaves the page exactly as it was.
-    payload = dict(g, kind=kind, focus=focus, href_prefix=href_prefix)
+    payload = dict(g, nodes=nodes_data, kind=kind, focus=focus, href_prefix=href_prefix)
     # `</script>` inside a JSON string ends the block early; escaping the angle
     # bracket is the whole fix and JSON parsers read \u003c back as `<`.
     blob = json.dumps(payload, separators=(",", ":")).replace("<", "\\u003c")
@@ -269,6 +287,30 @@ def evidence_html(evidence: list[dict], notes: dict) -> str:
             f'<span>{e(text)}</span></li>'
         )
     return f'<ul class="evidence">{"".join(rows)}</ul>'
+
+
+def provenance_html(raw, payloads: dict) -> str:
+    """Show every source payload behind an aggregate, including its fetch date."""
+    hashes = sorted(set(raw if isinstance(raw, list) else [raw] if raw else []))
+    if not hashes:
+        return '<p class="faint">No source payload hash was recorded.</p>'
+    rows = []
+    for sha in hashes:
+        fetched = payloads.get(sha, {}).get("fetched_at", "unknown")
+        rows.append(
+            f'<li><span class="mono">sha256 {e(sha)}</span> '
+            f'<span class="faint">fetched {e(fetched)}</span></li>'
+        )
+    return '<ul class="evidence provenance-list">' + "".join(rows) + "</ul>"
+
+
+def entity_link(kind: str, item: dict, available: set[str], *, prefix: str = "../../") -> str:
+    """Link an entity only when its detail page exists in this data release."""
+    ident = item.get("id")
+    label = item.get("name") or item.get("display_name") or ident or ""
+    if ident in available:
+        return f'<a href="{prefix}{kind}/{e(ident)}/">{e(label)}</a>'
+    return e(label)
 
 
 # -- pages ----------------------------------------------------------------
@@ -379,7 +421,7 @@ def stacked_bar(segments: list[tuple[str, int, str]], *, label: str, width: int 
 
 
 def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
-                quality_notes: dict) -> str:
+                quality_notes: dict, topic_ids: set[str] | None = None) -> str:
     wid = w["id"]
     q = w["quality"]
     authors_html = ", ".join(
@@ -410,8 +452,10 @@ def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
     )
 
     prov = payloads.get(w.get("raw") or "", {})
+    topic_ids = topic_ids or set()
     rows = "".join(
-        f'<tr><td>{e(t["name"])}</td><td class="faint">{e(t["field"] or "")}</td></tr>'
+        f'<tr><td>{entity_link("t", t, topic_ids)}</td>'
+        f'<td class="faint">{e(t["field"] or "")}</td></tr>'
         for t in w["topics"]
     )
     links = []
@@ -475,7 +519,8 @@ def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
     )
 
 
-def render_author(a: dict, notes: dict, bands: dict, payloads: dict) -> str:
+def render_author(a: dict, notes: dict, bands: dict, payloads: dict,
+                  institution_ids: set[str] | None = None) -> str:
     band = a["confidence"]["band"]
     works_rows = "".join(
         f'<tr><td><a href="../../w/{e(w["id"])}/">{e(w["title"])}</a></td>'
@@ -484,9 +529,11 @@ def render_author(a: dict, notes: dict, bands: dict, payloads: dict) -> str:
         f'<td class="num">{num(w["cited"])}</td></tr>'
         for w in a["works"]
     )
+    institution_ids = institution_ids or set()
     insts = ", ".join(
-        e(i["name"]) + (f' <span class="faint">({i["first_year"]}–{i["last_year"]})</span>'
-                        if i.get("first_year") else "")
+        entity_link("i", i, institution_ids)
+        + (f' <span class="faint">({i["first_year"]}–{i["last_year"]})</span>'
+           if i.get("first_year") else "")
         for i in a["institutions"]
     ) or '<span class="faint">No institution on the works in this corpus.</span>'
 
@@ -549,6 +596,138 @@ def render_author(a: dict, notes: dict, bands: dict, payloads: dict) -> str:
         body=body,
         path=f"a/{a['id']}/",
         island=True,
+    )
+
+
+def render_institution(i: dict, payloads: dict, author_ids: set[str],
+                       work_ids: set[str]) -> str:
+    iid = i["id"]
+    authors = "".join(
+        f'<tr><td>{entity_link("a", a, author_ids)}</td>'
+        f'<td class="num">{num(a.get("works") or 0)}</td>'
+        f'<td class="num">{num(a.get("cited_by_count") or 0)}</td>'
+        f'<td>{e(a.get("confidence") or "")}</td></tr>'
+        for a in i.get("authors", [])
+    )
+    works = "".join(
+        f'<tr><td>{entity_link("w", w, work_ids)}</td>'
+        f'<td class="num">{e(w.get("year") or "")}</td>'
+        f'<td class="num">{num(w.get("cited") or 0)}</td></tr>'
+        for w in i.get("works", [])
+    )
+    graph = i.get("graph") or {}
+    href = {n["id"]: f"../../a/{n['id']}/" for n in graph.get("nodes", []) if n["id"] in author_ids}
+    caption = (
+        f'{graph.get("shown", 0)} of {graph.get("available", 0)} authors shown in the '
+        "precomputed collaboration graph. Coordinates come from the export."
+    )
+    metadata = i.get("metadata") or {}
+    openalex_link = (
+        f'<a href="{e(i["openalex_url"])}">OpenAlex record</a>'
+        if i.get("openalex_url") else ""
+    )
+    empty = not i.get("authors") and not i.get("works")
+    empty_note = (
+        '<p class="withheld">This institution is present only as a last-known '
+        'institution in author payloads. No work in this corpus carries an '
+        'affiliation to it, so its author list, work list, and collaboration graph '
+        'are intentionally empty.</p>'
+        if empty else ""
+    )
+    body = f"""
+<h1>{e(i["name"])}</h1>
+<p class="meta">{num(len(i.get("authors", [])))} author(s) &middot;
+   {num(len(i.get("works", [])))} work(s)
+   {" &middot; " + e(metadata["country_code"]) if metadata.get("country_code") else ""}
+   {" &middot; " + e(metadata["type"]) if metadata.get("type") else ""}</p>
+{empty_note}
+<div class="grid two">
+<div>
+  {svg_graph(graph, href, caption, kind="collaboration", focus="", href_prefix="../../")}
+  <div class="legend"><span><i style="background:var(--ref)"></i>author</span>
+    <span>line weight = collaboration weight</span></div>
+  <h2 style="margin-top:26px">Authors</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Author</th><th class="num">Works</th><th class="num">Cited</th><th>Identity</th></tr></thead>
+    <tbody>{authors or '<tr><td class="faint" colspan="4">None affiliated in this corpus.</td></tr>'}</tbody>
+  </table></div>
+</div>
+<div>
+  <div class="panel"><h2>Works</h2>
+  <div class="scroll"><table><thead><tr><th>Title</th><th class="num">Year</th><th class="num">Cited</th></tr></thead>
+    <tbody>{works or '<tr><td class="faint" colspan="3">None affiliated in this corpus.</td></tr>'}</tbody>
+  </table></div></div>
+  <div class="panel"><h2>Details</h2>
+    <p>{openalex_link}</p>
+    <p class="meta">ROR {e(metadata.get("ror") or "not recorded")}</p>
+  </div>
+  <div class="panel"><h2>Provenance</h2>
+    <p class="meta">This aggregate combines the stored institution, author, and work records behind the lists and graph.</p>
+    {provenance_html(i.get("raw"), payloads)}
+  </div>
+</div>
+</div>
+"""
+    return page(
+        title=f'{i["name"]} — {SITE_NAME}',
+        description=f'{i["name"]}: affiliated authors, works, and a precomputed collaboration graph.',
+        body=body,
+        path=f"i/{iid}/",
+    )
+
+
+def render_topic(t: dict, payloads: dict, work_ids: set[str], author_ids: set[str]) -> str:
+    works = "".join(
+        f'<tr><td>{entity_link("w", w, work_ids)}</td>'
+        f'<td class="num">{e(w.get("year") or "")}</td>'
+        f'<td class="num">{num(w.get("cited") or 0)}</td></tr>'
+        for w in t.get("works", [])
+    )
+    authors = "".join(
+        f'<tr><td>{entity_link("a", a, author_ids)}</td>'
+        f'<td class="num">{num(a.get("participation") or 0)}</td>'
+        f'<td class="num">{num(a.get("cited_by_count") or 0)}</td></tr>'
+        for a in t.get("authors", [])
+    )
+    metadata = t.get("metadata") or {}
+    openalex_link = (
+        f'<a href="{e(t["openalex_url"])}">OpenAlex record</a>'
+        if t.get("openalex_url") else ""
+    )
+    body = f"""
+<h1>{e(t["name"])}</h1>
+<p class="meta">{num(len(t.get("works", [])))} work(s) &middot;
+   {num(len(t.get("authors", [])))} participating author(s)
+   {" &middot; " + e(metadata["field"]) if metadata.get("field") else ""}
+   {" &middot; " + e(metadata["domain"]) if metadata.get("domain") else ""}</p>
+<div class="grid two">
+<div>
+  <h2>Citation-ranked works</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Title</th><th class="num">Year</th><th class="num">Cited</th></tr></thead>
+    <tbody>{works or '<tr><td class="faint" colspan="3">No works in this corpus.</td></tr>'}</tbody>
+  </table></div>
+</div>
+<div>
+  <div class="panel"><h2>Participating authors</h2>
+  <div class="scroll"><table><thead><tr><th>Author</th><th class="num">Works</th><th class="num">Cited</th></tr></thead>
+    <tbody>{authors or '<tr><td class="faint" colspan="3">No authors in this corpus.</td></tr>'}</tbody>
+  </table></div></div>
+  <div class="panel"><h2>Details</h2>
+    <p>{openalex_link}</p>
+  </div>
+  <div class="panel"><h2>Provenance</h2>
+    <p class="meta">This aggregate combines the stored topic, work, and author records behind these rankings.</p>
+    {provenance_html(t.get("raw"), payloads)}
+  </div>
+</div>
+</div>
+"""
+    return page(
+        title=f'{t["name"]} — {SITE_NAME}',
+        description=f'{t["name"]}: citation-ranked works and participating authors.',
+        body=body,
+        path=f"t/{t['id']}/",
     )
 
 
@@ -615,7 +794,9 @@ def render_home(corpus: dict, works: list, authors: list) -> str:
   <tbody>{top}</tbody>
 </table></div>
 <p class="meta"><a href="works/">All {num(c["works"])} papers</a> &middot;
-   <a href="authors/">All {num(c["authors"])} authors</a></p>
+   <a href="authors/">All {num(c["authors"])} authors</a> &middot;
+   <a href="institutions/">Browse institutions</a> &middot;
+   <a href="topics/">Browse topics</a></p>
 """
     return page(title=f"{SITE_NAME} — {TAGLINE}", description=TAGLINE, body=body, path="")
 
@@ -633,7 +814,7 @@ def render_browse(kind: str, rows: list, corpus: dict) -> str:
             for r in rows[:400]
         )
         title, index = "Papers", "works-index.json"
-    else:
+    elif kind == "authors":
         head = '<tr><th>Author</th><th>Identity</th><th class="num">Works</th><th class="num">Collaborators</th><th class="num">Cited</th></tr>'
         body_rows = "".join(
             f'<tr><td><a href="../a/{e(r["id"])}/">{e(r["name"])}</a></td>'
@@ -643,6 +824,25 @@ def render_browse(kind: str, rows: list, corpus: dict) -> str:
             for r in rows[:400]
         )
         title, index = "Authors", "authors-index.json"
+    elif kind == "institutions":
+        head = '<tr><th>Institution</th><th class="num">Authors</th><th class="num">Works</th><th class="num">Graph</th></tr>'
+        body_rows = "".join(
+            f'<tr><td><a href="../i/{e(r["id"])}/">{e(r["name"])}</a></td>'
+            f'<td class="num">{num(r.get("authors") or 0)}</td>'
+            f'<td class="num">{num(r.get("works") or 0)}</td>'
+            f'<td class="num">{num(r.get("graph") or 0)}</td></tr>'
+            for r in rows[:400]
+        )
+        title, index = "Institutions", "institutions-index.json"
+    else:
+        head = '<tr><th>Topic</th><th class="num">Works</th><th class="num">Authors</th></tr>'
+        body_rows = "".join(
+            f'<tr><td><a href="../t/{e(r["id"])}/">{e(r["name"])}</a></td>'
+            f'<td class="num">{num(r.get("works") or 0)}</td>'
+            f'<td class="num">{num(r.get("authors") or 0)}</td></tr>'
+            for r in rows[:400]
+        )
+        title, index = "Topics", "topics-index.json"
 
     body = f"""
 <h1>{title}</h1>
@@ -783,6 +983,8 @@ def main() -> int:
     corpus = load("corpus.json")
     works_index = load("works-index.json")
     authors_index = load("authors-index.json")
+    institutions_index = load_optional("institutions-index.json", [])
+    topics_index = load_optional("topics-index.json", [])
     payloads = load("payloads.json")
     notes = corpus["identity_notes"]
     bands = corpus["identity_bands"]
@@ -797,38 +999,81 @@ def main() -> int:
     total = 0
     titles = {w["id"]: w for w in works_index}
     author_names = {a["id"]: a["name"] for a in authors_index}
+    work_ids = set(titles)
+    author_ids = set(author_names)
+    institution_payloads = {}
+    institution_dir = DATA / "institutions"
+    if institution_dir.exists():
+        for shard in sorted(institution_dir.glob("*.json")):
+            institution_payloads.update(json.loads(shard.read_text()))
+    topic_payloads = {}
+    topic_dir = DATA / "topics"
+    if topic_dir.exists():
+        for shard in sorted(topic_dir.glob("*.json")):
+            topic_payloads.update(json.loads(shard.read_text()))
+    institution_ids = set(institution_payloads)
+    topic_ids = set(topic_payloads)
 
     for shard in sorted((DATA / "works").glob("*.json")):
         for wid, w in json.loads(shard.read_text()).items():
             total += write(
                 f"w/{wid}/index.html",
-                render_work(w, author_names, titles, payloads, quality_notes),
+                render_work(w, author_names, titles, payloads, quality_notes, topic_ids),
             )
             n += 1
 
     for shard in sorted((DATA / "authors").glob("*.json")):
         for aid, a in json.loads(shard.read_text()).items():
-            total += write(f"a/{aid}/index.html", render_author(a, notes, bands, payloads))
+            total += write(
+                f"a/{aid}/index.html",
+                render_author(a, notes, bands, payloads, institution_ids),
+            )
             n += 1
+
+    for iid, institution in institution_payloads.items():
+        total += write(
+            f"i/{iid}/index.html",
+            render_institution(institution, payloads, author_ids, work_ids),
+        )
+        n += 1
+
+    for tid, topic in topic_payloads.items():
+        total += write(
+            f"t/{tid}/index.html",
+            render_topic(topic, payloads, work_ids, author_ids),
+        )
+        n += 1
 
     total += write("index.html", render_home(corpus, works_index, authors_index))
     total += write("works/index.html", render_browse("works", works_index, corpus))
     total += write("authors/index.html", render_browse("authors", authors_index, corpus))
+    total += write("institutions/index.html", render_browse("institutions", institutions_index, corpus))
+    total += write("topics/index.html", render_browse("topics", topics_index, corpus))
     total += write("methodology/index.html", render_methodology(corpus))
-    n += 4
+    n += 6
 
     # The browse pages fetch these at runtime for search; the rest of the corpus
     # data is already baked into the HTML and is not shipped.
     (SITE / "data").mkdir(exist_ok=True)
-    for name in ("works-index.json", "authors-index.json"):
-        shutil.copy(DATA / name, SITE / "data" / name)
+    for name in (
+        "works-index.json", "authors-index.json",
+        "institutions-index.json", "topics-index.json",
+    ):
+        source = DATA / name
+        if source.exists():
+            shutil.copy(source, SITE / "data" / name)
+        elif name in ("institutions-index.json", "topics-index.json"):
+            # Keep the legacy build's empty browse searches local and valid.
+            (SITE / "data" / name).write_text("[]")
 
     write("robots.txt", f"User-agent: *\nAllow: /\nSitemap: {SITE_URL}/sitemap.xml\n")
     urls = "".join(
         f"<url><loc>{SITE_URL}/{p}</loc></url>"
-        for p in ["", "works/", "authors/", "methodology/"]
+        for p in ["", "works/", "authors/", "institutions/", "topics/", "methodology/"]
         + [f"w/{w['id']}/" for w in works_index]
         + [f"a/{a['id']}/" for a in authors_index]
+        + [f"i/{i['id']}/" for i in institutions_index]
+        + [f"t/{t['id']}/" for t in topics_index]
     )
     write("sitemap.xml", f'<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{urls}</urlset>')
 
