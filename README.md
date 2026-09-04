@@ -7,7 +7,8 @@ SVG solved at build time rather than simulated in the browser.
     harvest.py   OpenAlex  ->  harvest/raw/    verbatim payloads, content-addressed
     derive.py    raw       ->  whocitedit.db   normalized SQLite (gitignored)
     export_json  db        ->  web/data/       committed, sharded JSON
-    render.py    web/data  ->  web/site/       9,910 static pages in ~1.3s
+    render.py    web/data  ->  web/site/       9,910 static pages in ~1.5s
+    web/app/     React     ->  web/assets/islands.js   one committed bundle
 
 The boundary that matters is `web/data/`. Everything upstream needs the network
 and a metered credit budget; everything downstream is a static build over files
@@ -16,9 +17,17 @@ already in the repo. **The gate never crosses it**, which is why CI is hermetic.
 ## Run it
 
 ```bash
-./tools/ci-setup.sh                       # a venv; there are no dependencies
-./tools/check.sh                          # the gate: tests + corpus floor + render
+./tools/ci-setup.sh          # a venv; the gate has no dependencies and no Node
+./tools/check.sh             # tests + corpus floor + bundle freshness + render
 python3 -m http.server 8000 --directory web/site
+```
+
+The React islands live in `web/app/` and compile to one committed bundle. The
+gate never builds them — it checks the committed bundle against a hash of its
+sources — so rendering and publishing the site need Python and nothing else:
+
+```bash
+./tools/build-app.sh         # npm ci + typecheck + lint + build, then re-stamp
 ```
 
 To refresh the corpus (network, operator only):
@@ -43,7 +52,9 @@ current corpus is marked low confidence, and saying so is the point.
 
 **It is static and free.** The graph is in the markup, so it renders with
 JavaScript off, it is in the page a crawler sees, and there is no login and no
-monthly graph allowance.
+monthly graph allowance. React then upgrades each figure in place — drag, zoom,
+hover, a citation view laid out along real time, and a year brush on a
+collaboration network — and only hides the static SVG once it has mounted.
 
 ## What it will not do
 

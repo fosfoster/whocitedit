@@ -47,3 +47,28 @@ jobs:
 
       - name: Check
         run: ./tools/check.sh
+
+  # NOT the gating check -- `commands.ci_check` in the charter is `test`, above.
+  # The gate catches the common staleness case on its own and without Node
+  # (`tools/bundle_hash.py` compares the committed bundle against a hash of its
+  # sources). This job catches the rarer one: a bundle that was rebuilt but does
+  # not reproduce from a clean `npm ci`. Keeping it separate is deliberate --
+  # a bad day for npm must not be able to stop this board producing work, which
+  # is exactly what happened to fund-tape for a day and a half.
+  app:
+    name: app
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/app/package-lock.json
+      - run: npm --prefix web/app ci
+      - run: npm --prefix web/app run typecheck
+      - run: npm --prefix web/app run lint
+      - run: npm --prefix web/app run build
+      # The committed bundle must be what a clean build produces.
+      - name: Committed bundle reproduces
+        run: git diff --exit-code -- web/assets/islands.js

@@ -9,5 +9,11 @@ harvest/manifest.jsonl
 __pycache__/
 *.pyc
 web/node_modules/
-web/out/
-web/.next/
+web/app/node_modules/
+web/app/dist/
+# The rendered site. This was tracked for the repository's first four commits
+# because .gitignore carried `web/out/` -- the Next.js output directory, from a
+# plan that was abandoned before the first render -- and never the directory the
+# Python renderer actually writes. It doubled the checkout, put 9,916 generated
+# files into every diff, and left rendered HTML hand-editable by a builder.
+web/site/

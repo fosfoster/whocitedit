@@ -66,6 +66,11 @@ for key in ("identity_notes", "identity_bands", "counts", "sources"):
 sys.exit(bad)
 PYEOF
 
+# The committed bundle is an artefact in the repository; this is what stops a
+# stale one shipping. Pure Python: no Node, no network.
+echo "== Island bundle"
+"$PY" tools/bundle_hash.py || fail=1
+
 echo "== Render"
 "$PY" render.py
 
