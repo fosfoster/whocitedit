@@ -1,0 +1,4 @@
+# Deliberately empty: the harvester and the exporter use the standard library
+# only (urllib, sqlite3, json). Every dependency added here has to be installed
+# on both CI runners and every build host before the gate can run, and nothing
+# this repo does needs one yet.

@@ -1,0 +1,172 @@
+# Swarmward charter for Who Cited It.
+#
+# Merging `main` does NOT publish by itself: the site is a static export and the
+# deploy is a separate step, so a merged pull request is inert until that runs.
+version: 1
+name: Who Cited It
+
+repo:
+  default_branch: main
+  remote: https://github.com/fosfoster/whocitedit.git
+  deploys_on_merge: false
+
+# NB the first LINE is load-bearing beyond its content: `swarmward charter`
+# prints `direction.splitlines()[0]` and nothing else, so it carries the whole
+# field on that surface. Keep it a self-contained sentence, above the headings.
+direction: |
+  Who Cited It (whocitedit.com) is where a paper's neighbourhood gets looked up — one static page per work and per author, with the graph already drawn.
+
+  ## What this is
+
+  A crawlable, login-free graph of open scholarship. One page per paper, one per
+  author, each carrying the citation neighbourhood and the collaboration network
+  as SVG that was solved at build time rather than simulated in the reader's
+  browser. Everything traces to a stored raw payload and a source link.
+
+  ## What this becomes
+
+  The place a citation neighbourhood gets looked up. The corpus is bounded and
+  the bound is committed as `corpus.json`, so "why is this paper here and not
+  that one" has a diffable answer. Three thousand works in one subfield is where
+  this starts, not the shape of the product: the value compounds because the
+  same ingest, the same schema and the same renderer serve every field after the
+  first, and widening that boundary is worth more than any single feature.
+
+  Two things make it bigger and they compound rather than add. A second field
+  should be a bounded piece of work. And every additional source that asserts an
+  edge — Crossref, OpenCitations, arXiv, Europe PMC — makes every edge already
+  held more trustworthy, because an edge two independent indexes agree on is
+  better evidence than one only OpenAlex carries. Corroboration is worth more
+  than another chart.
+
+  ## Where the value actually is
+
+  Not in having the graph — OpenAlex publishes that under CC0 and anyone can
+  download it. It is in two things nobody in this category does.
+
+  THE HONESTY LAYER. Author records in every open bibliographic database are
+  produced by a disambiguation algorithm that splits one researcher across
+  several records and merges several researchers into one. Every competing tool
+  renders that output as fact. This site does not: each author page carries a
+  confidence band and the signals behind it, and NO RECORD IS EVER MERGED,
+  SPLIT OR DROPPED. A record we doubt says so and stays visible. About a third
+  of the rows in the current corpus are marked low confidence, and that number
+  being visible is the product.
+
+  STATIC AND FREE. Connected Papers, Litmaps, ResearchRabbit and Inciteful are
+  all login-walled applications that compute layout in the browser, and the free
+  tier of that category collapsed during 2025 — ResearchRabbit moved to freemium
+  after the Litmaps acquisition, Connected Papers caps a free account at five
+  graphs a month. None of them leave a crawlable page behind. Precomputing the
+  layout is what makes these pages indexable, instant and identical for every
+  reader, and it is why the renderer has no framework in it.
+
+  ## Not buildable here
+
+  These are not gaps waiting for a ticket. A proposal to close one is wrong.
+
+  - NO SCRAPING OF PUBLISHER SITES, no paywall circumvention, no Sci-Hub. Every
+    record comes from an open API or bulk dump under a licence that permits
+    reuse. The word "scraping" does not describe anything this repo does.
+  - NO REPUBLISHING TEXT WE ARE NOT LICENSED FOR. Publishers have had abstracts
+    removed from open indexes in bulk (Springer Nature 2022, Elsevier 2024), and
+    an abstract present in a payload is not permission to show it. `licensing.py`
+    holds a closed allow-list of licences, an unrecognised licence fails toward
+    withholding, and the schema itself refuses to store text beside a
+    withholding reason. That file is denied to builders.
+  - NO FULL OPENALEX MIRROR. The snapshot is roughly 330 GB compressed and
+    1.6 TB expanded against 13-16 GB free on this fleet's Linux hosts. The
+    corpus is bounded and harvested through the API on purpose.
+  - AUTHOR IDENTITY IS PROBABILISTIC. "Resolve every author to one true record"
+    is not an achievable acceptance criterion. The achievable one is that every
+    author page states its confidence, shows the evidence, and merges nothing.
+  - THE HARVEST IS NOT A BUILDER STEP. It needs the network, a metered credit
+    budget and a residential IP. Builders work against the committed JSON in
+    `web/data/`, which is why the gate is hermetic and a bad day at OpenAlex
+    cannot turn into a red board.
+
+commands:
+  # There is deliberately nothing to install: `requirements.txt` is empty and
+  # this repo has no Node. Two other content boards here carry charter
+  # paragraphs about `npm ci` and `.nvmrc` failures that stopped them producing
+  # work for days; a gate with no dependency tree cannot have that failure.
+  setup: ./tools/ci-setup.sh
+  # ONE definition of the gate, shared with CI. `tools/**` is denied below, so a
+  # builder cannot pass its own ticket by making the gate smaller.
+  test: ./tools/check.sh
+  # There is no separate linter. The gate is the tests plus a real render of the
+  # committed corpus, which is a stronger statement than a style pass.
+  lint: ./tools/check.sh
+  # Must match the `name:` of the job in .github/workflows/test.yml exactly.
+  # Verify against `gh api repos/fosfoster/whocitedit/commits/main/check-runs`,
+  # never by reading the YAML -- a check reporting under any other name is
+  # treated as "not green" and blocks every merge silently.
+  ci_check: test
+
+demo:
+  urls:
+    Production: https://whocitedit.com
+
+  # Renders the real site and serves the static export, so a screenshot is of
+  # what the deploy would ship rather than of a dev server that differs from it.
+  #
+  # TIMED ON THIS REPO: `render.py` writes all 9,910 pages in 1.3 seconds and
+  # `http.server` binds immediately, against `capture.SERVE_TIMEOUT_S` of 90.
+  # That margin is the reason this repo is not a Next.js app: a static export of
+  # ten thousand pages runs into minutes, and a build that misses the budget
+  # does not produce an error -- it produces a `skipped` line in the pull
+  # request body that reads exactly like a repo with no UI in it.
+  #
+  # No `PORT=` prefix: capture already exports SWARMWARD_DEMO_PORT into this
+  # command's environment.
+  serve: python3 render.py && python3 -m http.server $SWARMWARD_DEMO_PORT --directory web/site
+  # A work page and an author page, because the two graphs are different code
+  # paths and a screenshot of only one of them proves half the change.
+  routes: ["/", "/w/W2911964244/", "/a/A5086198262/", "/methodology/"]
+
+policy:
+  guard_weakened_tests: true
+  allow_paths:
+    - "*.py"
+    - requirements.txt
+    - README.md
+    - "docs/**"
+    - "web/assets/**"
+  deny_paths:
+    - "docs/direction.md"        # the decisions of record
+    - "**/licensing.py"          # the editorial spine: what may be rendered at all
+    - "**/test_licensing.py"     # and the enumeration that proves it holds
+    - "**/test_pipeline.py"      # the leak test and the internal-link check
+    - "corpus.json"              # widening the corpus is an operator decision
+    - "tools/**"                 # the gate; editable means self-certifying
+    - "web/data/**"              # content arrives from a reviewed harvest, not a ticket
+    - ".github/**"
+    - "**/.env"
+    - "**/.env.*"
+    - ".git/**"
+    - "**/*.db"
+    - "harvest/**"
+  allow_commands: [python3, git, ./tools/check.sh, ./tools/ci-setup.sh]
+  permission_mode: acceptEdits
+
+models:
+  builder: claude-cli
+  composer: claude-cli
+
+# Opens closed, as a new board should. `autonomy: pr-only` means work lands as a
+# pull request for a human to merge; the surveyor is off until this board has a
+# track record, so goals arrive from an operator rather than from the board
+# proposing its own.
+autonomy: pr-only
+
+surveyor:
+  autonomy: off
+
+concurrency: 1
+
+stop_loss:
+  consecutive_failures: 12
+  # A real ceiling, unlike every other board on this fleet, which carry `0`
+  # (meaning none). A new board with no track record is exactly the one that
+  # should have a number here.
+  daily_usd: 40

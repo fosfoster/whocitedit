@@ -1,0 +1,13 @@
+# The corpus database is derived and never committed. What readers are served is
+# the JSON in web/data/ that export_json.py writes -- the same split
+# was-it-true and pubfig-content use. A gate that needed the DB would need the
+# network, and a builder has neither.
+whocitedit.db
+harvest/raw/
+harvest/manifest.jsonl
+.venv/
+__pycache__/
+*.pyc
+web/node_modules/
+web/out/
+web/.next/

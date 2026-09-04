@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Methodology — Who Cited It</title>
+<meta name="description" content="Sources, licences, how collaboration weight is computed, and how author identity confidence is judged.">
+<link rel="canonical" href="https://whocitedit.com/methodology">
+<meta property="og:title" content="Methodology — Who Cited It">
+<meta property="og:description" content="Sources, licences, how collaboration weight is computed, and how author identity confidence is judged.">
+<meta property="og:type" content="website">
+<link rel="stylesheet" href="../assets/style.css">
+
+</head>
+<body>
+<header class="site"><div class="wrap">
+  <a class="brand" href="../">Who Cited It</a>
+  <nav>
+    <a href="../works/">Papers</a>
+    <a href="../authors/">Authors</a>
+    <a href="../methodology/">Methodology</a>
+  </nav>
+</div></header>
+<main class="wrap">
+
+<h1>Methodology</h1>
+<p class="lede">What is in this corpus, where every figure came from, and the three
+   things this site refuses to do.</p>
+
+<div class="panel">
+<h2>Sources</h2>
+<div class="scroll"><table>
+  <thead><tr><th>Source</th><th>Licence</th><th>Used for</th></tr></thead>
+  <tbody><tr><td><a href="https://openalex.org">OpenAlex</a></td><td>CC0</td><td>works, authors, institutions, topics and citation edges</td></tr></tbody>
+</table></div>
+<p class="meta">Nothing here is scraped from a publisher's website. Every record comes
+   from an open API or bulk dump under a licence that permits reuse, and each page
+   names the stored payload it was rendered from.</p>
+</div>
+
+<div class="panel">
+<h2>Collaboration weight is not a count of shared papers</h2>
+<p>Two people who wrote a two-author paper together last year worked together.
+   Two people who appear in the middle of a 900-author collaboration paper in 1998
+   probably did not. Ranking collaborators by shared-paper count treats those as
+   the same fact, so this site weights each shared work by three things:</p>
+<ul>
+  <li><b>Team size.</b> A pair's share of a work decays as <span class="mono">1 / log2(n+1)</span>
+      in the number of authors, so a small team counts for more than a roster.</li>
+  <li><b>Author position.</b> Both in a lead position (first or last) counts fully;
+      one lead counts 0.6; neither counts 0.3.</li>
+  <li><b>Recency.</b> A ten-year half-life, so a graph shows a current network rather
+      than a career total.</li>
+</ul>
+<p>This is a claim about what collaboration means, not a measurement. It is stated
+   here so you can disagree with it.</p>
+</div>
+
+<div class="panel">
+<h2>Author identity is inferred, and we show our work</h2>
+<p>Author records in every open bibliographic database are produced by a
+   disambiguation algorithm. It splits one researcher across several records and
+   merges several researchers into one. Tools built on top of this usually render
+   the output as fact.</p>
+<p>Instead, every author page carries a confidence band and the signals behind it:
+   whether a human-claimed ORCID is present, how many distinct name forms appear,
+   how many institutions show up inside any five-year window, and how much of the
+   record sits in one field. <b>No record is ever merged, split or dropped here.</b>
+   A record we doubt says so and stays visible.</p>
+<p class="meta">Currently 3,643 high, 890 medium
+   and 2,373 low confidence.</p>
+</div>
+
+<div class="panel">
+<h2>Why some abstracts are missing</h2>
+<p>An abstract present in a source record is not permission to republish it.
+   Publishers have had abstracts removed from open indexes in bulk &mdash; Springer
+   Nature in 2022 and Elsevier in 2024 &mdash; and the ones that remain carry the
+   licence of the copy they came from. This site renders an abstract only when the
+   work has an open-access copy under a licence that permits redistribution, and
+   says which of the two reasons applies when it does not.</p>
+<p class="meta">
+   236 rendered &middot;
+   1,747 withheld for licence &middot;
+   1,017 absent from the source.</p>
+</div>
+
+<div class="panel">
+<h2>What this site will not do</h2>
+<ul>
+  <li>Scrape publisher websites, or route around a paywall.</li>
+  <li>Republish text it does not hold a redistributable licence for.</li>
+  <li>Merge two author records because they share a name, or hide a record because
+      its identity is doubtful.</li>
+  <li>Present the in-corpus graph as though it were the whole of science. Citation
+      counts shown are global; the graph is explicitly the subgraph inside this
+      corpus, and each page says how much of a neighbourhood it is showing.</li>
+</ul>
+</div>
+
+</main>
+<footer class="site"><div class="wrap">
+  <p>Built from <a href="https://openalex.org">OpenAlex</a>, which publishes its data under CC0.
+     Every figure on this site links to the stored payload it came from.
+     Author identity is inferred, not asserted &mdash; see <a href="../methodology/">methodology</a>.</p>
+</div></footer>
+</body>
+</html>

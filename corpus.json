@@ -1,0 +1,8 @@
+{
+  "name": "Artificial Intelligence",
+  "description": "The most-cited works in OpenAlex's Artificial Intelligence subfield, with every author and every citation edge that falls inside the set.",
+  "seed_filter": "primary_topic.subfield.id:subfields/1702",
+  "seed_sort": "cited_by_count:desc",
+  "max_works": 3000,
+  "openalex_subfield": "https://openalex.org/subfields/1702"
+}

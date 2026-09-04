@@ -1,0 +1,49 @@
+name: Test
+
+on:
+  pull_request:
+    branches: [main]
+  # Merge is the deploy here, so `main` is tested after the fact as well as
+  # before. A red run on `main` means the published site is broken, not that a
+  # branch needs rebasing.
+  push:
+    branches: [main]
+
+# A force-pushed branch otherwise leaves its previous run going to completion and
+# starts a second one, and both bill. The integrator rebases open branches
+# whenever `main` moves, so this is the common case rather than an edge one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    # Must stay exactly `test`. It is `commands.ci_check` in
+    # .swarmward/project.yaml AND the required context on `main`'s branch
+    # protection. A check reporting under any other name is treated as "not
+    # green" and blocks every merge silently, so verify this against
+    # `gh api repos/fosfoster/whocitedit/commits/main/check-runs` rather than by
+    # reading this file.
+    name: test
+    # One org variable, `RUNNER_LABEL`, moves this job to the self-hosted pool
+    # and back. Unset it and this resolves to `ubuntu-latest`, which is the
+    # revert. This job does seconds of work, and hosted minutes round up to a
+    # full minute every time.
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The self-hosted pool has its Python seeded out of band and no sudo, so
+      # `setup-python` cannot run there.
+      - uses: actions/setup-python@v5
+        if: vars.RUNNER_LABEL == ''
+        with:
+          python-version: '3.13'
+
+      # ONE definition of the gate, called by CI and by `commands.test`. Both
+      # scripts are in `policy.deny_paths`.
+      - name: Set up
+        run: ./tools/ci-setup.sh
+
+      - name: Check
+        run: ./tools/check.sh
