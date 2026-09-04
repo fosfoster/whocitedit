@@ -110,12 +110,15 @@ def build_corpus(tmp: Path) -> tuple[Path, set[str], str]:
     return tmp / "corpus.db", shas, author_sha
 
 
-def read_shards(data: Path, directory: str, index_name: str) -> tuple[list[dict], dict[str, dict]]:
+def read_shards(data: Path, directory: str, index_name: str) -> tuple[list[dict], dict[str, dict], list[str]]:
     index = json.loads((data / index_name).read_text())
     shards = {}
+    shard_ids = []
     for path in sorted((data / directory).glob("*.json")):
-        shards.update(json.loads(path.read_text()))
-    return index, shards
+        shard = json.loads(path.read_text())
+        shard_ids.extend(shard)
+        shards.update(shard)
+    return index, shards, shard_ids
 
 
 def snapshot(root: Path) -> dict[str, bytes]:
@@ -138,11 +141,13 @@ def main() -> int:
         bad += check(export_json.main() == 0, "export failed")
 
         data = tmp / "data"
-        institution_index, institutions = read_shards(
+        institution_index, institutions, institution_shard_ids = read_shards(
             data, "institutions", "institutions-index.json"
         )
-        topic_index, topics = read_shards(data, "topics", "topics-index.json")
-        _, works = read_shards(data, "works", "works-index.json")
+        topic_index, topics, topic_shard_ids = read_shards(
+            data, "topics", "topics-index.json"
+        )
+        _, works, _ = read_shards(data, "works", "works-index.json")
         conn = db.connect(db_path)
         institution_ids = {r["id"] for r in conn.execute("SELECT id FROM institution")}
         topic_ids = {r["id"] for r in conn.execute("SELECT id FROM topic")}
@@ -153,8 +158,11 @@ def main() -> int:
                      "institution index is not exactly the database table")
         bad += check(set(indexed_topics) == topic_ids and len(indexed_topics) == len(topic_ids),
                      "topic index is not exactly the database table")
-        bad += check(set(institutions) == institution_ids, "institution shards omit or duplicate IDs")
-        bad += check(set(topics) == topic_ids, "topic shards omit or duplicate IDs")
+        bad += check(set(institution_shard_ids) == institution_ids and
+                     len(institution_shard_ids) == len(institution_ids),
+                     "institution shards are not exactly the database table")
+        bad += check(set(topic_shard_ids) == topic_ids and len(topic_shard_ids) == len(topic_ids),
+                     "topic shards are not exactly the database table")
         bad += check(all({topic["id"] for topic in works[wid]["topics"]} == {"T1"}
                          for wid in ("W1", "W2", "W3")),
                      "a fixture work lost its topic during derivation/export")
