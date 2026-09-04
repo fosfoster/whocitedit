@@ -137,7 +137,10 @@ policy:
     - "**/licensing.py"          # the editorial spine: what may be rendered at all
     - "**/test_licensing.py"     # and the enumeration that proves it holds
     - "**/test_pipeline.py"      # the leak test and the internal-link check
-    - "corpus.json"              # widening the corpus is an operator decision
+    - "**/corpus.json"           # widening the corpus is an operator decision
+                                 # `**/` is load-bearing: a bare `corpus.json`
+                                 # denies the repository root only, and readiness
+                                 # blocks the board on exactly that.
     - "tools/**"                 # the gate; editable means self-certifying
     - "web/data/**"              # content arrives from a reviewed harvest, not a ticket
     - ".github/**"
