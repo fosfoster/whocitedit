@@ -76,6 +76,13 @@ CREATE TABLE IF NOT EXISTS work (
 CREATE INDEX IF NOT EXISTS work_year ON work(year);
 CREATE INDEX IF NOT EXISTS work_cited ON work(cited_by_count DESC);
 
+CREATE TABLE IF NOT EXISTS work_payload (
+  work_id TEXT NOT NULL REFERENCES work(id),
+  raw_sha TEXT NOT NULL REFERENCES raw_payload(sha256),
+  PRIMARY KEY (work_id, raw_sha)
+);
+CREATE INDEX IF NOT EXISTS work_payload_sha ON work_payload(raw_sha);
+
 CREATE TABLE IF NOT EXISTS author (
   id             TEXT PRIMARY KEY,
   display_name   TEXT NOT NULL,
@@ -89,20 +96,45 @@ CREATE TABLE IF NOT EXISTS author (
   raw_sha        TEXT REFERENCES raw_payload(sha256)
 );
 
+CREATE TABLE IF NOT EXISTS author_payload (
+  author_id TEXT NOT NULL REFERENCES author(id),
+  raw_sha   TEXT NOT NULL REFERENCES raw_payload(sha256),
+  PRIMARY KEY (author_id, raw_sha)
+);
+CREATE INDEX IF NOT EXISTS author_payload_sha ON author_payload(raw_sha);
+
 CREATE TABLE IF NOT EXISTS institution (
   id           TEXT PRIMARY KEY,
   display_name TEXT NOT NULL,
   ror          TEXT,
   country_code TEXT,
-  type         TEXT
+  type         TEXT,
+  raw_sha      TEXT REFERENCES raw_payload(sha256)
 );
 
 CREATE TABLE IF NOT EXISTS topic (
   id           TEXT PRIMARY KEY,
   display_name TEXT NOT NULL,
   field        TEXT,
-  domain       TEXT
+  domain       TEXT,
+  raw_sha      TEXT REFERENCES raw_payload(sha256)
 );
+
+-- An entity can be described by more than one raw response. Keep every
+-- contributor rather than letting the last response hide the earlier one.
+CREATE TABLE IF NOT EXISTS institution_payload (
+  institution_id TEXT NOT NULL REFERENCES institution(id),
+  raw_sha        TEXT NOT NULL REFERENCES raw_payload(sha256),
+  PRIMARY KEY (institution_id, raw_sha)
+);
+CREATE INDEX IF NOT EXISTS institution_payload_sha ON institution_payload(raw_sha);
+
+CREATE TABLE IF NOT EXISTS topic_payload (
+  topic_id TEXT NOT NULL REFERENCES topic(id),
+  raw_sha  TEXT NOT NULL REFERENCES raw_payload(sha256),
+  PRIMARY KEY (topic_id, raw_sha)
+);
+CREATE INDEX IF NOT EXISTS topic_payload_sha ON topic_payload(raw_sha);
 
 CREATE TABLE IF NOT EXISTS authorship (
   work_id         TEXT NOT NULL REFERENCES work(id),
@@ -167,6 +199,14 @@ def connect(path: Path | str = DB_PATH) -> sqlite3.Connection:
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    # The committed database is generated from scratch, but this keeps a
+    # locally cached database usable after the schema grows.
+    for table in ("institution", "topic"):
+        columns = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if "raw_sha" not in columns:
+            conn.execute(
+                f"ALTER TABLE {table} ADD COLUMN raw_sha TEXT REFERENCES raw_payload(sha256)"
+            )
     return conn
 
 

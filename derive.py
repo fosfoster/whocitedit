@@ -108,17 +108,77 @@ def _title(w: dict) -> str:
     return f"[No title in the source record — {hint}]"
 
 
+def _insert_institution(conn, inst: dict, raw_sha: str | None) -> str | None:
+    iid = short_id(inst.get("id"))
+    if not iid:
+        return None
+    conn.execute(
+        "INSERT INTO institution(id, display_name, ror, country_code, type, raw_sha) "
+        "VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+        "display_name=excluded.display_name, ror=excluded.ror, "
+        "country_code=excluded.country_code, type=excluded.type, raw_sha=excluded.raw_sha",
+        (
+            iid,
+            inst.get("display_name") or iid,
+            inst.get("ror"),
+            inst.get("country_code"),
+            inst.get("type"),
+            raw_sha,
+        ),
+    )
+    if raw_sha:
+        conn.execute(
+            "INSERT OR IGNORE INTO institution_payload(institution_id, raw_sha) VALUES(?,?)",
+            (iid, raw_sha),
+        )
+    return iid
+
+
+def _insert_topic(conn, topic: dict, raw_sha: str | None) -> str | None:
+    tid = short_id(topic.get("id"))
+    if not tid:
+        return None
+    conn.execute(
+        "INSERT INTO topic(id, display_name, field, domain, raw_sha) VALUES(?,?,?,?,?) "
+        "ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name, "
+        "field=excluded.field, domain=excluded.domain, raw_sha=excluded.raw_sha",
+        (
+            tid,
+            topic.get("display_name") or tid,
+            (topic.get("field") or {}).get("display_name"),
+            (topic.get("domain") or {}).get("display_name"),
+            raw_sha,
+        ),
+    )
+    if raw_sha:
+        conn.execute(
+            "INSERT OR IGNORE INTO topic_payload(topic_id, raw_sha) VALUES(?,?)",
+            (tid, raw_sha),
+        )
+    return tid
+
+
 def _insert_work(conn, w: dict, raw_sha: str) -> str:
     wid = short_id(w["id"])
     abstract, reason, license_id = abstract_decision(w)
     best = w.get("best_oa_location") or {}
     src = (w.get("primary_location") or {}).get("source") or {}
     conn.execute(
-        """INSERT OR REPLACE INTO work(
+        """INSERT INTO work(
              id, doi, title, year, publication_date, type, source_id, source_name,
              is_oa, oa_status, oa_url, oa_license, abstract, abstract_reason,
              cited_by_count, referenced_count, is_seed, raw_sha)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)""",
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)
+           ON CONFLICT(id) DO UPDATE SET doi=excluded.doi, title=excluded.title,
+             year=excluded.year, publication_date=excluded.publication_date,
+             type=excluded.type, source_id=excluded.source_id,
+             source_name=excluded.source_name, is_oa=excluded.is_oa,
+             oa_status=excluded.oa_status, oa_url=excluded.oa_url,
+             oa_license=excluded.oa_license, abstract=excluded.abstract,
+             abstract_reason=excluded.abstract_reason,
+             cited_by_count=excluded.cited_by_count,
+             referenced_count=excluded.referenced_count,
+             is_seed=excluded.is_seed, raw_sha=excluded.raw_sha""",
         (
             wid,
             w.get("doi"),
@@ -139,20 +199,15 @@ def _insert_work(conn, w: dict, raw_sha: str) -> str:
             raw_sha,
         ),
     )
+    conn.execute(
+        "INSERT OR IGNORE INTO work_payload(work_id, raw_sha) VALUES(?,?)",
+        (wid, raw_sha),
+    )
 
     for topic in (w.get("topics") or [])[:3]:
-        tid = short_id(topic.get("id"))
+        tid = _insert_topic(conn, topic, raw_sha)
         if not tid:
             continue
-        conn.execute(
-            "INSERT OR REPLACE INTO topic(id, display_name, field, domain) VALUES(?,?,?,?)",
-            (
-                tid,
-                topic.get("display_name") or tid,
-                (topic.get("field") or {}).get("display_name"),
-                (topic.get("domain") or {}).get("display_name"),
-            ),
-        )
         conn.execute(
             "INSERT OR REPLACE INTO work_topic(work_id, topic_id, score) VALUES(?,?,?)",
             (wid, tid, topic.get("score")),
@@ -183,20 +238,9 @@ def _insert_work(conn, w: dict, raw_sha: str) -> str:
             ),
         )
         for inst in a.get("institutions") or []:
-            iid = short_id(inst.get("id"))
+            iid = _insert_institution(conn, inst, raw_sha)
             if not iid:
                 continue
-            conn.execute(
-                "INSERT OR REPLACE INTO institution(id, display_name, ror, country_code, type)"
-                " VALUES(?,?,?,?,?)",
-                (
-                    iid,
-                    inst.get("display_name") or iid,
-                    inst.get("ror"),
-                    inst.get("country_code"),
-                    inst.get("type"),
-                ),
-            )
             conn.execute(
                 "INSERT OR REPLACE INTO affiliation(author_id, institution_id, work_id, year)"
                 " VALUES(?,?,?,?)",
@@ -209,14 +253,7 @@ def _insert_author(conn, a: dict, raw_sha: str) -> None:
     aid = short_id(a["id"])
     insts = a.get("last_known_institutions") or []
     for inst in insts:
-        iid = short_id(inst.get("id"))
-        if iid:
-            conn.execute(
-                "INSERT OR REPLACE INTO institution(id, display_name, ror, country_code, type)"
-                " VALUES(?,?,?,?,?)",
-                (iid, inst.get("display_name") or iid, inst.get("ror"),
-                 inst.get("country_code"), inst.get("type")),
-            )
+        _insert_institution(conn, inst, raw_sha)
     conn.execute(
         "INSERT INTO author(id, display_name, orcid, works_count, cited_by_count, raw_sha)"
         " VALUES(?,?,?,?,?,?)"
@@ -231,6 +268,10 @@ def _insert_author(conn, a: dict, raw_sha: str) -> None:
             a.get("cited_by_count") or 0,
             raw_sha,
         ),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO author_payload(author_id, raw_sha) VALUES(?,?)",
+        (aid, raw_sha),
     )
 
 
