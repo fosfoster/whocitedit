@@ -27,6 +27,7 @@ from pathlib import Path
 
 import graph
 import identity
+import quality
 from db import DB_PATH, connect, get_meta
 from licensing import ABSTRACT_RENDERED
 
@@ -147,6 +148,11 @@ def work_payload(conn, row, neighbourhood) -> dict:
         },
         "cited_by_count": row["cited_by_count"],
         "referenced_count": row["referenced_count"],
+        "quality": {
+            "band": row["quality"] or quality.COMPLETE,
+            "sentence": quality.band_sentence(row["quality"] or quality.COMPLETE),
+            "evidence": quality.decode_evidence(row["quality_evidence"]),
+        },
         "authors": authors,
         "topics": topics,
         "graph": neighbourhood,
@@ -311,6 +317,7 @@ def main() -> int:
                 "authors": [a["name"] for a in payload["authors"][:4]],
                 "n_authors": len(payload["authors"]),
                 "oa": bool(row["is_oa"]),
+                "quality": row["quality"] or quality.COMPLETE,
             }
         )
     total_bytes = 0
@@ -419,6 +426,14 @@ def main() -> int:
                 "institutions": conn.execute("SELECT COUNT(*) c FROM institution").fetchone()["c"],
             },
             "identity": bands_count,
+            "quality": {
+                b: conn.execute(
+                    "SELECT COUNT(*) c FROM work WHERE quality = ?", (b,)
+                ).fetchone()["c"]
+                for b in (quality.COMPLETE, quality.PARTIAL, quality.SUSPECT)
+            },
+            "quality_notes": quality.NOTE_TEMPLATES,
+            "quality_bands": quality.BAND_SENTENCES,
             # Shipped rather than duplicated in the reader: identity.py is the
             # single definition of how a signal is described, and the reader
             # formats these instead of keeping its own TypeScript copy.

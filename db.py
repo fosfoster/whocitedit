@@ -63,6 +63,11 @@ CREATE TABLE IF NOT EXISTS work (
   -- something in the seed cited it. The reader is told which, because a
   -- neighbour has not been through the same selection as a seed.
   is_seed         INTEGER NOT NULL DEFAULT 0,
+  -- Written by quality.py, the sibling of the author confidence band. Never
+  -- used to delete or correct a row: a `suspect` record stays visible and says
+  -- what is wrong with it.
+  quality         TEXT,
+  quality_evidence TEXT,
   raw_sha         TEXT NOT NULL REFERENCES raw_payload(sha256),
   -- A table-level constraint, which is where SQLite requires it: a CHECK placed
   -- among the column definitions is a syntax error at the NEXT column.
