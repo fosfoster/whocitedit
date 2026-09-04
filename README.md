@@ -1,18 +1,27 @@
 # Who Cited It
 
-A static, crawlable graph of open scholarship: one page per paper, one per
-author, each carrying its citation neighbourhood and collaboration network as
+A static, crawlable graph of open scholarship: one page per paper, author,
+institution, and topic, each carrying the relevant ranked lists and graphs as
 SVG solved at build time rather than simulated in the browser.
 
     harvest.py   OpenAlex  ->  harvest/raw/    verbatim payloads, content-addressed
     derive.py    raw       ->  whocitedit.db   normalized SQLite (gitignored)
     export_json  db        ->  web/data/       committed, sharded JSON
-    render.py    web/data  ->  web/site/       9,910 static pages in ~1.5s
+    render.py    web/data  ->  web/site/       static work, author, institution and topic pages
     web/app/     React     ->  web/assets/islands.js   one committed bundle
 
 The boundary that matters is `web/data/`. Everything upstream needs the network
 and a metered credit budget; everything downstream is a static build over files
 already in the repo. **The gate never crosses it**, which is why CI is hermetic.
+
+The reader flow is deliberately one-way: the database is normalized from the
+stored OpenAlex payloads, `export_json.py` turns it into content-addressed,
+sharded JSON (including entity indexes and aggregate payload provenance), and
+`render.py` turns those shards into static HTML. Work, author, institution, and
+topic detail pages are linked to one another where the corresponding shard is
+present; browse pages use only copied local indexes for search. A legacy
+`web/data/` release without institution or topic indexes still renders its
+existing pages, with empty collection browses and no dangling new detail links.
 
 ## Run it
 
