@@ -122,7 +122,7 @@ def work_payload(conn, row, neighbourhood) -> dict:
         for r in conn.execute(
             "SELECT t.id, t.display_name, t.field FROM work_topic wt "
             "JOIN topic t ON t.id = wt.topic_id WHERE wt.work_id = ? "
-            "ORDER BY wt.score DESC",
+            "ORDER BY wt.score DESC, t.id",
             (wid,),
         )
     ]
@@ -295,6 +295,257 @@ def author_graph(aid: str, names: dict[str, str], bands: dict[str, str], adj, we
     }
 
 
+def _source_hashes(conn, queries: list[tuple[str, tuple]]) -> list[str]:
+    """Return the complete, stable set of payloads behind an aggregate."""
+    hashes = set()
+    for sql, params in queries:
+        hashes.update(
+            r["raw_sha"]
+            for r in conn.execute(sql, params)
+            if r["raw_sha"]
+        )
+    return sorted(hashes)
+
+
+def _work_brief(row) -> dict:
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "year": row["year"],
+        "cited": row["cited_by_count"],
+    }
+
+
+def institution_graph(conn, author_ids: list[str], author_rows: dict[str, dict]) -> dict:
+    """Build the bounded induced coauthor graph for one institution."""
+    ids = set(author_ids)
+    edge_rows = []
+    if ids:
+        placeholders = ",".join("?" for _ in ids)
+        edge_rows = list(conn.execute(
+            "SELECT a_id, b_id, weight, works, first_year, last_year "
+            f"FROM coauthorship WHERE a_id IN ({placeholders}) "
+            f"AND b_id IN ({placeholders}) ORDER BY weight DESC, a_id, b_id",
+            tuple(ids) + tuple(ids),
+        ))
+    degree = {aid: [0.0, 0] for aid in ids}
+    for row in edge_rows:
+        degree[row["a_id"]][0] += row["weight"]
+        degree[row["a_id"]][1] += 1
+        degree[row["b_id"]][0] += row["weight"]
+        degree[row["b_id"]][1] += 1
+
+    # Connected authors make the induced graph useful; participation breaks
+    # ties for isolated authors and keeps the selection deterministic.
+    selected = sorted(
+        author_ids,
+        key=lambda aid: (
+            -degree[aid][0],
+            -degree[aid][1],
+            -author_rows[aid]["works"],
+            aid,
+        ),
+    )[:MAX_AUTHOR_GRAPH_NODES]
+    selected_set = set(selected)
+    edges = [
+        (r["a_id"], r["b_id"], r["weight"])
+        for r in edge_rows
+        if r["a_id"] in selected_set and r["b_id"] in selected_set
+    ]
+    coords = graph.layout(selected, edges, seed=19, width=1000, height=640)
+    nodes = []
+    for aid in sorted(selected):
+        row = author_rows[aid]
+        x, y = coords.get(aid, (500.0, 320.0))
+        nodes.append(
+            {
+                "id": aid,
+                "name": row["name"],
+                "confidence": row["confidence"],
+                "x": x,
+                "y": y,
+            }
+        )
+    return {
+        "width": 1000,
+        "height": 640,
+        "nodes": nodes,
+        "edges": [
+            {"s": r["a_id"], "t": r["b_id"], "w": round(r["weight"], 3)}
+            for r in edge_rows
+            if r["a_id"] in selected_set and r["b_id"] in selected_set
+        ],
+        "shown": len(selected),
+        "available": len(author_ids),
+    }
+
+
+def _institution_sources(conn, iid: str) -> list[str]:
+    return _source_hashes(
+        conn,
+        [
+            ("SELECT raw_sha FROM institution WHERE id = ?", (iid,)),
+            ("SELECT raw_sha FROM institution_payload WHERE institution_id = ?", (iid,)),
+            (
+                "SELECT au.raw_sha FROM affiliation af JOIN author au ON au.id = af.author_id "
+                "WHERE af.institution_id = ?",
+                (iid,),
+            ),
+            (
+                "SELECT w.raw_sha FROM affiliation af JOIN work w ON w.id = af.work_id "
+                "WHERE af.institution_id = ?",
+                (iid,),
+            ),
+            (
+                "SELECT wp.raw_sha FROM work_payload wp JOIN affiliation af "
+                "ON af.work_id = wp.work_id WHERE af.institution_id = ?",
+                (iid,),
+            ),
+            (
+                "SELECT ap.raw_sha FROM author_payload ap JOIN affiliation af "
+                "ON af.author_id = ap.author_id WHERE af.institution_id = ?",
+                (iid,),
+            ),
+            # Coauthorship can use any corpus work by an affiliated author,
+            # including work published before or outside this institution.
+            (
+                "SELECT DISTINCT w.raw_sha FROM authorship a JOIN work w ON w.id = a.work_id "
+                "JOIN affiliation af ON af.author_id = a.author_id "
+                "WHERE af.institution_id = ?",
+                (iid,),
+            ),
+            (
+                "SELECT DISTINCT wp.raw_sha FROM work_payload wp JOIN authorship a "
+                "ON a.work_id = wp.work_id JOIN affiliation af ON af.author_id = a.author_id "
+                "WHERE af.institution_id = ?",
+                (iid,),
+            ),
+        ],
+    )
+
+
+def _topic_sources(conn, tid: str) -> list[str]:
+    return _source_hashes(
+        conn,
+        [
+            ("SELECT raw_sha FROM topic WHERE id = ?", (tid,)),
+            ("SELECT raw_sha FROM topic_payload WHERE topic_id = ?", (tid,)),
+            (
+                "SELECT w.raw_sha FROM work_topic wt JOIN work w ON w.id = wt.work_id "
+                "WHERE wt.topic_id = ?",
+                (tid,),
+            ),
+            (
+                "SELECT wp.raw_sha FROM work_topic wt JOIN work_payload wp "
+                "ON wp.work_id = wt.work_id WHERE wt.topic_id = ?",
+                (tid,),
+            ),
+            (
+                "SELECT au.raw_sha FROM work_topic wt "
+                "JOIN authorship a ON a.work_id = wt.work_id "
+                "JOIN author au ON au.id = a.author_id WHERE wt.topic_id = ?",
+                (tid,),
+            ),
+            (
+                "SELECT ap.raw_sha FROM work_topic wt JOIN authorship a "
+                "ON a.work_id = wt.work_id JOIN author_payload ap ON ap.author_id = a.author_id "
+                "WHERE wt.topic_id = ?",
+                (tid,),
+            ),
+        ],
+    )
+
+
+def institution_payload(conn, row: dict) -> dict:
+    iid = row["id"]
+    authors = []
+    author_ids = []
+    author_rows: dict[str, dict] = {}
+    for author in conn.execute(
+        "SELECT au.id, au.display_name, au.confidence, au.cited_by_count, "
+        "COUNT(DISTINCT af.work_id) AS works "
+        "FROM affiliation af JOIN author au ON au.id = af.author_id "
+        "WHERE af.institution_id = ? GROUP BY au.id ORDER BY au.id",
+        (iid,),
+    ):
+        author_ids.append(author["id"])
+        author_rows[author["id"]] = {
+            "name": author["display_name"],
+            "confidence": author["confidence"],
+            "works": author["works"],
+        }
+        authors.append(
+            {
+                "id": author["id"],
+                "name": author["display_name"],
+                "works": author["works"],
+                "cited_by_count": author["cited_by_count"],
+                "confidence": author["confidence"],
+            }
+        )
+    works = [
+        _work_brief(work)
+        for work in conn.execute(
+            "SELECT DISTINCT w.id, w.title, w.year, w.cited_by_count FROM affiliation af "
+            "JOIN work w ON w.id = af.work_id WHERE af.institution_id = ? "
+            "ORDER BY w.cited_by_count DESC, w.id",
+            (iid,),
+        )
+    ]
+    return {
+        "id": iid,
+        "name": row["display_name"],
+        "metadata": {
+            "ror": row["ror"],
+            "country_code": row["country_code"],
+            "type": row["type"],
+        },
+        "authors": authors,
+        "works": works,
+        "graph": institution_graph(conn, author_ids, author_rows),
+        "raw": _institution_sources(conn, iid),
+        "openalex_url": f"https://openalex.org/{iid}",
+    }
+
+
+def topic_payload(conn, row) -> dict:
+    tid = row["id"]
+    works = [
+        _work_brief(work)
+        for work in conn.execute(
+            "SELECT w.id, w.title, w.year, w.cited_by_count FROM work_topic wt "
+            "JOIN work w ON w.id = wt.work_id WHERE wt.topic_id = ? "
+            "ORDER BY w.cited_by_count DESC, w.id",
+            (tid,),
+        )
+    ]
+    authors = [
+        {
+            "id": author["id"],
+            "name": author["display_name"],
+            "participation": author["participation"],
+            "cited_by_count": author["cited_by_count"],
+        }
+        for author in conn.execute(
+            "SELECT au.id, au.display_name, au.cited_by_count, "
+            "COUNT(DISTINCT a.work_id) AS participation "
+            "FROM work_topic wt JOIN authorship a ON a.work_id = wt.work_id "
+            "JOIN author au ON au.id = a.author_id WHERE wt.topic_id = ? "
+            "GROUP BY au.id ORDER BY participation DESC, au.cited_by_count DESC, au.id",
+            (tid,),
+        )
+    ]
+    return {
+        "id": tid,
+        "name": row["display_name"],
+        "metadata": {"field": row["field"], "domain": row["domain"]},
+        "works": works,
+        "authors": authors,
+        "raw": _topic_sources(conn, tid),
+        "openalex_url": f"https://openalex.org/{tid}",
+    }
+
+
 def main() -> int:
     if not DB_PATH.exists():
         print("no corpus database: run `python3 derive.py` first", file=sys.stderr)
@@ -321,7 +572,7 @@ def main() -> int:
     # -- works -----------------------------------------------------------
     work_shards: dict[str, dict] = {}
     work_index = []
-    for row in conn.execute("SELECT * FROM work ORDER BY cited_by_count DESC"):
+    for row in conn.execute("SELECT * FROM work ORDER BY cited_by_count DESC, id"):
         wid = row["id"]
         payload = work_payload(conn, row, work_graph(conn, wid, titles))
         payload["in_corpus_cited_by"] = in_cites.get(wid, 0)
@@ -350,7 +601,7 @@ def main() -> int:
     for row in conn.execute(
         "SELECT au.*, COUNT(a.work_id) AS n_works FROM author au "
         "JOIN authorship a ON a.author_id = au.id GROUP BY au.id "
-        "ORDER BY n_works DESC, au.cited_by_count DESC"
+        "ORDER BY n_works DESC, au.cited_by_count DESC, au.id"
     ):
         aid = row["id"]
         works = [
@@ -365,14 +616,14 @@ def main() -> int:
                 "SELECT work_id, author_position FROM authorship WHERE author_id = ?", (aid,)
             )
         ]
-        works.sort(key=lambda w: -(w["cited"] or 0))
+        works.sort(key=lambda w: (-(w["cited"] or 0), w["id"]))
         insts = [
             {"id": r["id"], "name": r["display_name"], "ror": r["ror"],
              "first_year": r["first_year"], "last_year": r["last_year"]}
             for r in conn.execute(
                 "SELECT i.id, i.display_name, i.ror, MIN(af.year) first_year, MAX(af.year) last_year "
                 "FROM affiliation af JOIN institution i ON i.id = af.institution_id "
-                "WHERE af.author_id = ? GROUP BY i.id ORDER BY last_year DESC",
+                "WHERE af.author_id = ? GROUP BY i.id ORDER BY last_year DESC, i.id",
                 (aid,),
             )
         ]
@@ -415,6 +666,46 @@ def main() -> int:
         total_bytes += _write(OUT / "authors" / f"{name}.json", blob)
     total_bytes += _write(OUT / "authors-index.json", author_index)
 
+    # -- institutions ---------------------------------------------------
+    institution_shards: dict[str, dict] = {}
+    institution_index = []
+    for row in conn.execute("SELECT * FROM institution ORDER BY id"):
+        iid = row["id"]
+        payload = institution_payload(conn, row)
+        institution_shards.setdefault(shard(iid), {})[iid] = payload
+        institution_index.append(
+            {
+                "id": iid,
+                "name": row["display_name"],
+                "authors": len(payload["authors"]),
+                "works": len(payload["works"]),
+                "graph": payload["graph"]["shown"],
+                "available_graph": payload["graph"]["available"],
+            }
+        )
+    for name, blob in institution_shards.items():
+        total_bytes += _write(OUT / "institutions" / f"{name}.json", blob)
+    total_bytes += _write(OUT / "institutions-index.json", institution_index)
+
+    # -- topics ----------------------------------------------------------
+    topic_shards: dict[str, dict] = {}
+    topic_index = []
+    for row in conn.execute("SELECT * FROM topic ORDER BY id"):
+        tid = row["id"]
+        payload = topic_payload(conn, row)
+        topic_shards.setdefault(shard(tid), {})[tid] = payload
+        topic_index.append(
+            {
+                "id": tid,
+                "name": row["display_name"],
+                "works": len(payload["works"]),
+                "authors": len(payload["authors"]),
+            }
+        )
+    for name, blob in topic_shards.items():
+        total_bytes += _write(OUT / "topics" / f"{name}.json", blob)
+    total_bytes += _write(OUT / "topics-index.json", topic_index)
+
     # -- provenance ------------------------------------------------------
     # Every entity names one of these by hash. This is the file that makes
     # "which bytes did this number come from" answerable on the page itself.
@@ -443,6 +734,7 @@ def main() -> int:
                 "citations": conn.execute("SELECT COUNT(*) c FROM citation").fetchone()["c"],
                 "coauthor_edges": conn.execute("SELECT COUNT(*) c FROM coauthorship").fetchone()["c"],
                 "institutions": conn.execute("SELECT COUNT(*) c FROM institution").fetchone()["c"],
+                "topics": conn.execute("SELECT COUNT(*) c FROM topic").fetchone()["c"],
             },
             "identity": bands_count,
             "quality": {
@@ -469,7 +761,8 @@ def main() -> int:
             ],
         },
     )
-    print(f"== wrote {len(work_index)} works and {len(author_index)} authors "
+    print(f"== wrote {len(work_index)} works, {len(author_index)} authors, "
+          f"{len(institution_index)} institutions and {len(topic_index)} topics "
           f"({total_bytes / 1e6:.1f} MB) to {_display(OUT)}")
     return 0
 
