@@ -67,10 +67,17 @@ export function ForceGraph({
 
   // The simulation owns one mutable node object per id for its whole life, so a
   // filter change moves the survivors rather than teleporting the whole graph.
-  const simNodes = useRef<Map<string, SimNode>>(new Map());
-  for (const n of nodes) {
-    if (!simNodes.current.has(n.id)) simNodes.current.set(n.id, { ...n });
-  }
+  //
+  // A memo rather than a ref, and not only to satisfy a lint rule: a ref read
+  // during render is untracked, so React is free to render a frame against
+  // positions it never saw change. `nodes` comes from an inert JSON payload, so
+  // this map is built once and the simulation mutates the objects inside it,
+  // with the tick counter below as the thing that actually schedules a paint.
+  const simNodes = useMemo(() => {
+    const map = new Map<string, SimNode>();
+    for (const n of nodes) map.set(n.id, { ...n });
+    return map;
+  }, [nodes]);
 
   const neighbours = useMemo(() => {
     const map = new Map<string, Set<string>>();
@@ -84,7 +91,7 @@ export function ForceGraph({
   }, [shownEdges]);
 
   useEffect(() => {
-    const active = shown.map((n) => simNodes.current.get(n.id)!);
+    const active = shown.map((n) => simNodes.get(n.id)!);
     const links = shownEdges.map((e) => ({ source: e.s, target: e.t, w: e.w ?? 1 }));
 
     simRef.current?.stop();
@@ -123,7 +130,7 @@ export function ForceGraph({
 
     // The focus node is the subject of the page; anchoring it keeps the reader
     // oriented while everything else rearranges around it.
-    const centre = simNodes.current.get(focus);
+    const centre = simNodes.get(focus);
     if (centre && !pinX) {
       centre.fx = width / 2;
       centre.fy = height / 2;
@@ -134,17 +141,24 @@ export function ForceGraph({
     simRef.current = sim;
 
     if (prefersReducedMotion()) {
+      // Solve it in one go and paint the answer, rather than animating a
+      // simulation at someone who asked the platform for less motion. The
+      // repaint is scheduled rather than set synchronously inside the effect,
+      // which is both what the hooks rule wants and one fewer render pass.
       sim.stop();
       sim.tick(260);
-      setTick((t) => t + 1);
-      return () => void sim.stop();
+      const frame = requestAnimationFrame(() => setTick((t) => t + 1));
+      return () => {
+        cancelAnimationFrame(frame);
+        sim.stop();
+      };
     }
     sim.on("tick", () => setTick((t) => t + 1));
     return () => {
       sim.on("tick", null);
       sim.stop();
     };
-  }, [shown, shownEdges, width, height, focus, pinX, radius]);
+  }, [shown, shownEdges, width, height, focus, pinX, radius, simNodes]);
 
   const zoomRef = useRef<ReturnType<typeof d3zoom<SVGSVGElement, unknown>> | null>(null);
 
@@ -165,12 +179,12 @@ export function ForceGraph({
       const behaviour = d3drag<SVGGElement, unknown>()
         .on("start", (event) => {
           if (!event.active) simRef.current?.alphaTarget(0.25).restart();
-          const n = simNodes.current.get(id)!;
+          const n = simNodes.get(id)!;
           n.fx = n.x;
           n.fy = n.y;
         })
         .on("drag", (event) => {
-          const n = simNodes.current.get(id)!;
+          const n = simNodes.get(id)!;
           // The pointer arrives in screen space; the graph lives in zoomed
           // space, so without this a node lags the cursor at any zoom but 1.
           const [x, y] = transform.invert([event.x, event.y]);
@@ -179,13 +193,13 @@ export function ForceGraph({
         })
         .on("end", (event) => {
           if (!event.active) simRef.current?.alphaTarget(0);
-          const n = simNodes.current.get(id)!;
+          const n = simNodes.get(id)!;
           if (id !== focus || pinX) n.fx = pinX ? n.fx : undefined;
           if (id !== focus) n.fy = undefined;
         });
       select(el).call(behaviour);
     },
-    [transform, focus, pinX],
+    [transform, focus, pinX, simNodes],
   );
 
   const resetView = () => {
@@ -218,7 +232,7 @@ export function ForceGraph({
     transform.k >= LABEL_ZOOM_ALL ||
     labelled.has(n.id);
 
-  const positioned = shown.map((n) => simNodes.current.get(n.id)!);
+  const positioned = shown.map((n) => simNodes.get(n.id)!);
   const byId = new Map(positioned.map((n) => [n.id, n]));
   const hovered = hover ? byId.get(hover) : null;
   const tip = hovered ? nodeTooltip(hovered) : null;

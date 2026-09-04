@@ -16,6 +16,8 @@ for _d in "/opt/node${_want}/bin" "/opt/homebrew/opt/node@${_want}/bin"; do
 done
 
 npm --prefix web/app ci
+npm --prefix web/app run typecheck
+npm --prefix web/app run lint
 npm --prefix web/app run build
 python3 tools/bundle_hash.py --write
 echo "== bundle rebuilt and source hash recorded"
