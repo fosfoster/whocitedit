@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fetch the corpus from OpenAlex into `harvest/raw/`. Network; operator lane.
+"""Fetch OpenAlex corpus metadata and COCI references into `harvest/raw/`.
 
 THIS IS NOT A BUILDER STEP. It needs the network, it spends a metered credit
 allowance, and it writes files that are gitignored. `tools/check.sh` never calls
@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 
 from openalex import Client, short_id
+from opencitations import Client as CociClient
+from opencitations import normalize_doi
 
 ROOT = Path(__file__).parent
 CORPUS = json.loads((ROOT / "corpus.json").read_text())
@@ -66,6 +68,10 @@ def author_ids_in_raw() -> list[str]:
     ids: set[str] = set()
     for path in sorted((ROOT / "harvest" / "raw").rglob("*.json")):
         payload = json.loads(path.read_text())
+        # COCI responses are top-level lists. They share the raw store, but
+        # they have no OpenAlex authorships to discover.
+        if not isinstance(payload, dict):
+            continue
         for work in payload.get("results") or []:
             if "authorships" not in work:
                 continue
@@ -74,6 +80,25 @@ def author_ids_in_raw() -> list[str]:
                 if aid:
                     ids.add(aid)
     return sorted(ids)
+
+
+def dois_in_raw() -> list[str]:
+    """Find each DOI in stored OpenAlex work pages, once."""
+    dois: set[str] = set()
+    for path in sorted((ROOT / "harvest" / "raw").rglob("*.json")):
+        payload = json.loads(path.read_text())
+        if not isinstance(payload, dict):
+            continue
+        for work in payload.get("results") or []:
+            if not isinstance(work, dict) or "authorships" not in work:
+                continue
+            doi = work.get("doi")
+            if doi:
+                try:
+                    dois.add(normalize_doi(doi))
+                except ValueError:
+                    print(f"! ignored invalid OpenAlex DOI: {doi!r}", file=sys.stderr)
+    return sorted(dois)
 
 
 def harvest_authors(client: Client) -> int:
@@ -95,8 +120,25 @@ def harvest_authors(client: Client) -> int:
     return done
 
 
+def harvest_citations(client: CociClient) -> int:
+    """Store COCI's outgoing-reference lists for the harvested works."""
+    dois = dois_in_raw()
+    print(f"  {len(dois)} DOI-bearing works referenced by the stored OpenAlex pages")
+    for done, doi in enumerate(dois, start=1):
+        client.references(doi)
+        print(f"  citations {done}/{len(dois)}  ({client.spent} requests)", flush=True)
+    return len(dois)
+
+
 def main(argv: list[str]) -> int:
     what = argv[1] if len(argv) > 1 else "all"
+    if what == "citations":
+        coci = CociClient()
+        print("== citations")
+        harvest_citations(coci)
+        print(f"== done: {coci.spent} requests spent, {coci.remaining} left today")
+        return 0
+
     client = Client()
     if not client.mailto:
         # Not fatal, but the polite pool is free and the common pool is not

@@ -4,7 +4,7 @@ A static, crawlable graph of open scholarship: one page per paper, author,
 institution, and topic, each carrying the relevant ranked lists and graphs as
 SVG solved at build time rather than simulated in the browser.
 
-    harvest.py   OpenAlex  ->  harvest/raw/    verbatim payloads, content-addressed
+    harvest.py   OpenAlex + COCI  ->  harvest/raw/    verbatim payloads, content-addressed
     derive.py    raw       ->  whocitedit.db   normalized SQLite (gitignored)
     export_json  db        ->  web/data/       committed, sharded JSON
     render.py    web/data  ->  web/site/       static work, author, institution and topic pages
@@ -43,6 +43,9 @@ To refresh the corpus (network, operator only):
 
 ```bash
 WHOCITEDIT_MAILTO=you@example.com python3 harvest.py all
+# A separate, bounded COCI pass stores outgoing DOI references in the same raw
+# provenance store. It is never run by the builder or CI.
+python3 harvest.py citations
 python3 derive.py && python3 export_json.py && python3 render.py
 ```
 
@@ -78,3 +81,9 @@ in-corpus subgraph as though it were the whole of science. See
 institutions, topics and citation edges. Its API is credit-metered at 100,000
 credits a day free, where a list request costs ten; `openalex.py` counts credits
 rather than requests and refuses rather than overrunning.
+
+[OpenCitations COCI](https://opencitations.net/index/coci/) supplies a separate
+operator-only DOI reference harvest. `opencitations.py` applies the same
+preflight budget, retry, throttling, content-addressed raw storage, and manifest
+provenance rules as the OpenAlex client; `python3 harvest.py citations` is the
+only entry point that invokes it.
