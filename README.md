@@ -39,6 +39,20 @@ sources — so rendering and publishing the site need Python and nothing else:
 ./tools/build-app.sh         # npm ci + typecheck + lint + build, then re-stamp
 ```
 
+## Deploy and verify
+
+Deploy the committed site, then verify the production response in that order:
+
+```bash
+./tools/deploy.sh
+python3 check_deploy.py https://whocitedit.com
+```
+
+An exit 1 means deployed content has drifted from the expected release; an
+exit 2 means `https://whocitedit.com` could not be reached. CI only runs the
+checker's fixture-backed tests; its automated gate remains network-free and
+never contacts production.
+
 To refresh the corpus (network, operator only):
 
 ```bash
