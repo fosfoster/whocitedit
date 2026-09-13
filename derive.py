@@ -77,6 +77,11 @@ def load(conn) -> dict:
             "VALUES(?,?,?,?)",
             (rec["sha256"], rec["url"], rec["fetched_at"], rec["path"]),
         )
+        # COCI stores outgoing references as a top-level list. It is retained
+        # for provenance and later DOI reconciliation, not mistaken for an
+        # OpenAlex page during an offline derive.
+        if not isinstance(payload, dict):
+            continue
         for obj in payload.get("results") or []:
             if _is_work(obj):
                 references[_insert_work(conn, obj, rec["sha256"])] = [

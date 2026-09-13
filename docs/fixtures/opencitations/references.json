@@ -1,0 +1,20 @@
+[
+  {
+    "oci": "0612010633050202100806-0612010633050202100807",
+    "citing": "10.5555/source-paper",
+    "cited": "10.5555/reference-one",
+    "creation": "2024-01-02",
+    "timespan": "P1Y",
+    "journal_sc": "no",
+    "author_sc": "no"
+  },
+  {
+    "oci": "0612010633050202100806-0612010633050202100808",
+    "citing": "10.5555/source-paper",
+    "cited": "10.5555/reference-two",
+    "creation": "2023-04-05",
+    "timespan": "P2Y",
+    "journal_sc": "no",
+    "author_sc": "no"
+  }
+]
