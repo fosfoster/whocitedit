@@ -172,7 +172,20 @@ def work_graph(conn, wid: str, titles: dict[str, dict]) -> dict:
     keep_citers = citers[: budget - len(keep_refs)]
 
     node_ids = [wid] + keep_refs + keep_citers
-    edges = [(c, wid, 1.0) for c in keep_citers] + [(wid, r, 1.0) for r in keep_refs]
+    edge_sources = {
+        (r["citing_id"], r["cited_id"]): json.loads(r["sources"])
+        for r in conn.execute(
+            "SELECT citing_id, cited_id, sources FROM citation "
+            "WHERE citing_id IN ({marks}) AND cited_id IN ({marks})".format(
+                marks=",".join("?" for _ in node_ids),
+            ),
+            node_ids + node_ids,
+        )
+    }
+    edges = (
+        [(c, wid, 1.0, edge_sources[(c, wid)]) for c in keep_citers]
+        + [(wid, r, 1.0, edge_sources[(wid, r)]) for r in keep_refs]
+    )
 
     # EDGES AMONG THE NEIGHBOURS, not only to the focus. Without these the graph
     # is a star with the focus at the centre and every layout of it is a
@@ -183,13 +196,17 @@ def work_graph(conn, wid: str, titles: dict[str, dict]) -> dict:
     if inner:
         marks = ",".join("?" * len(inner))
         rows = conn.execute(
-            f"SELECT citing_id, cited_id FROM citation "
+            f"SELECT citing_id, cited_id, sources FROM citation "
             f"WHERE citing_id IN ({marks}) AND cited_id IN ({marks})",
             list(inner) + list(inner),
         )
-        edges += [(r["citing_id"], r["cited_id"], 0.6) for r in rows]
+        edges += [
+            (r["citing_id"], r["cited_id"], 0.6, json.loads(r["sources"]))
+            for r in rows
+        ]
 
-    coords = graph.layout(node_ids, edges, seed=7, width=1000, height=640)
+    coords = graph.layout(node_ids, [(s, t, weight) for s, t, weight, _ in edges],
+                          seed=7, width=1000, height=640)
 
     def node(nid: str, kind: str) -> dict:
         meta = titles.get(nid, {})
@@ -212,8 +229,9 @@ def work_graph(conn, wid: str, titles: dict[str, dict]) -> dict:
         + [node(n, "reference") for n in keep_refs]
         + [node(n, "citer") for n in keep_citers],
         "edges": [
-            {"s": s, "t": t, **({"inner": True} if wid not in (s, t) else {})}
-            for s, t, _ in edges
+            {"s": s, "t": t, "sources": sources,
+             **({"inner": True} if wid not in (s, t) else {})}
+            for s, t, _, sources in edges
         ],
         "shown": len(node_ids) - 1,
         "available": total,
@@ -757,7 +775,13 @@ def main() -> int:
                     "url": "https://openalex.org",
                     "license": "CC0",
                     "role": "works, authors, institutions, topics and citation edges",
-                }
+                },
+                {
+                    "name": "OpenCitations COCI",
+                    "url": "https://opencitations.net/index/coci/",
+                    "license": "CC0",
+                    "role": "citation edges",
+                },
             ],
         },
     )
