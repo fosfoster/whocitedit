@@ -26,6 +26,7 @@ import quality
 from db import DB_PATH, connect, set_meta
 from licensing import abstract_decision
 from openalex import short_id
+from opencitations import normalize_doi
 
 ROOT = Path(__file__).parent
 RAW = ROOT / "harvest" / "raw"
@@ -69,6 +70,7 @@ def _is_author(obj: dict) -> bool:
 def load(conn) -> dict:
     stats = {"payloads": 0, "works": 0, "authors": 0, "authorships": 0}
     references: dict[str, list[str]] = {}
+    coci_assertions: list[tuple[str, str]] = []
 
     for rec, payload in _payloads():
         stats["payloads"] += 1
@@ -77,10 +79,16 @@ def load(conn) -> dict:
             "VALUES(?,?,?,?)",
             (rec["sha256"], rec["url"], rec["fetched_at"], rec["path"]),
         )
-        # COCI stores outgoing references as a top-level list. It is retained
-        # for provenance and later DOI reconciliation, not mistaken for an
-        # OpenAlex page during an offline derive.
+        # COCI stores outgoing references as a top-level list. Reconcile those
+        # DOI pairs after every OpenAlex work is present, so either endpoint can
+        # be resolved against the completed in-corpus DOI index.
         if not isinstance(payload, dict):
+            if isinstance(payload, list):
+                coci_assertions.extend(
+                    (obj.get("citing"), obj.get("cited"))
+                    for obj in payload
+                    if isinstance(obj, dict)
+                )
             continue
         for obj in payload.get("results") or []:
             if _is_work(obj):
@@ -93,7 +101,7 @@ def load(conn) -> dict:
                 stats["authors"] += 1
 
     stats["authorships"] = conn.execute("SELECT COUNT(*) c FROM authorship").fetchone()["c"]
-    stats["citations"] = _insert_citations(conn, references)
+    stats["citations"] = _insert_citations(conn, references, coci_assertions)
     return stats
 
 
@@ -280,16 +288,44 @@ def _insert_author(conn, a: dict, raw_sha: str) -> None:
     )
 
 
-def _insert_citations(conn, references: dict[str, list[str]]) -> int:
+def _normalized_doi(value: str | None) -> str | None:
+    """Canonical DOI key for matching COCI and OpenAlex identifiers."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return normalize_doi(value).lower()
+    except ValueError:
+        return None
+
+
+def _insert_citations(conn, references: dict[str, list[str]],
+                      coci_assertions: list[tuple[str, str]]) -> int:
     in_corpus = {r["id"] for r in conn.execute("SELECT id FROM work")}
+    assertions: dict[tuple[str, str], set[str]] = {}
+
+    for citing, cited_ids in references.items():
+        for cited in cited_ids:
+            if cited in in_corpus and cited != citing:
+                assertions.setdefault((citing, cited), set()).add("openalex")
+
+    doi_to_work = {}
+    for row in conn.execute("SELECT id, doi FROM work ORDER BY id"):
+        doi = _normalized_doi(row["doi"])
+        if doi:
+            doi_to_work.setdefault(doi, row["id"])
+    for citing_doi, cited_doi in coci_assertions:
+        citing = doi_to_work.get(_normalized_doi(citing_doi))
+        cited = doi_to_work.get(_normalized_doi(cited_doi))
+        if citing and cited and citing != cited:
+            assertions.setdefault((citing, cited), set()).add("opencitations")
+
     rows = [
-        (citing, cited)
-        for citing, cited_ids in references.items()
-        for cited in cited_ids
-        if cited in in_corpus and cited != citing
+        (citing, cited, graph.encode_sources(list(sources)))
+        for (citing, cited), sources in sorted(assertions.items())
     ]
     conn.executemany(
-        "INSERT OR IGNORE INTO citation(citing_id, cited_id, sources) VALUES(?,?,'[\"openalex\"]')",
+        "INSERT INTO citation(citing_id, cited_id, sources) VALUES(?,?,?) "
+        "ON CONFLICT(citing_id, cited_id) DO UPDATE SET sources=excluded.sources",
         rows,
     )
     return conn.execute("SELECT COUNT(*) c FROM citation").fetchone()["c"]

@@ -1,0 +1,51 @@
+{
+  "results": [
+    {
+      "id": "https://openalex.org/W1",
+      "doi": "https://doi.org/10.5555/SOURCE-PAPER",
+      "title": "COCI source paper",
+      "publication_year": 2024,
+      "publication_date": "2024-01-01",
+      "type": "article",
+      "cited_by_count": 30,
+      "referenced_works": ["https://openalex.org/W2"],
+      "authorships": []
+    },
+    {
+      "id": "https://openalex.org/W2",
+      "doi": "doi:10.5555/reference-one",
+      "title": "Corroborated reference",
+      "publication_year": 2023,
+      "publication_date": "2023-01-01",
+      "type": "article",
+      "cited_by_count": 20,
+      "referenced_works": [],
+      "authorships": []
+    },
+    {
+      "id": "https://openalex.org/W3",
+      "doi": "10.5555/reference-two",
+      "title": "COCI-only reference",
+      "publication_year": 2022,
+      "publication_date": "2022-01-01",
+      "type": "article",
+      "cited_by_count": 10,
+      "referenced_works": [],
+      "authorships": []
+    },
+    {
+      "id": "https://openalex.org/W4",
+      "doi": "10.5555/openalex-only",
+      "title": "OpenAlex-only citer",
+      "publication_year": 2021,
+      "publication_date": "2021-01-01",
+      "type": "article",
+      "cited_by_count": 5,
+      "referenced_works": [
+        "https://openalex.org/W1",
+        "https://openalex.org/W3"
+      ],
+      "authorships": []
+    }
+  ]
+}
