@@ -53,6 +53,83 @@ def num(n) -> str:
     return f"{n:,}" if isinstance(n, int) else str(n or "")
 
 
+def canonical_url(path: str) -> str:
+    return f"{SITE_URL}/{path}".rstrip("/") or SITE_URL
+
+
+def json_ld(value: dict) -> str:
+    """Serialize JSON-LD without letting data close its script element."""
+    encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    encoded = encoded.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+    return f'<script type="application/ld+json">{encoded}</script>'
+
+
+def citation_tag(name: str, value) -> str:
+    return f'<meta name="{e(name)}" content="{e(value)}">' if value else ""
+
+
+def work_head_metadata(w: dict, canonical: str) -> str:
+    """Citation and CreativeWork metadata using only the exported work fields."""
+    citation = [
+        citation_tag("citation_title", w.get("title")),
+        *[citation_tag("citation_author", author.get("name"))
+          for author in w.get("authors", [])],
+        citation_tag("citation_publication_date", w.get("date") or w.get("year")),
+        citation_tag("citation_doi", w.get("doi")),
+        citation_tag("citation_public_url", canonical),
+    ]
+
+    creative_work = {
+        "@context": "https://schema.org",
+        "@type": "CreativeWork",
+        "@id": canonical,
+        "url": canonical,
+    }
+    if w.get("title"):
+        creative_work["name"] = w["title"]
+    if w.get("openalex_url"):
+        creative_work["sameAs"] = w["openalex_url"]
+    if w.get("id"):
+        creative_work["identifier"] = [{
+            "@type": "PropertyValue",
+            "propertyID": "OpenAlex",
+            "value": w["id"],
+        }]
+    authors = []
+    for author in w.get("authors", []):
+        person = {"@type": "Person"}
+        if author.get("name"):
+            person["name"] = author["name"]
+        if author.get("id"):
+            person["sameAs"] = f'https://openalex.org/{author["id"]}'
+        if len(person) > 1:
+            authors.append(person)
+    if authors:
+        creative_work["author"] = authors
+    if w.get("date") or w.get("year"):
+        creative_work["datePublished"] = str(w.get("date") or w["year"])
+    if w.get("doi"):
+        creative_work.setdefault("identifier", []).append({
+            "@type": "PropertyValue",
+            "propertyID": "DOI",
+            "value": w["doi"],
+        })
+    source = w.get("source") or {}
+    if source.get("name") or source.get("id"):
+        source_work = {"@type": "CreativeWork"}
+        if source.get("name"):
+            source_work["name"] = source["name"]
+        if source.get("id"):
+            source_work["identifier"] = {
+                "@type": "PropertyValue",
+                "propertyID": "OpenAlex",
+                "value": source["id"],
+            }
+        creative_work["isPartOf"] = source_work
+
+    return "\n".join(tag for tag in citation if tag) + "\n" + json_ld(creative_work)
+
+
 
 def _display(path: Path) -> str:
     """Repo-relative when it can be, absolute otherwise.
@@ -79,7 +156,7 @@ def load_optional(name: str, default):
 
 def page(*, title: str, description: str, body: str, path: str, extra_head: str = "",
          island: bool = False) -> str:
-    canonical = f"{SITE_URL}/{path}".rstrip("/") or SITE_URL
+    canonical = canonical_url(path)
     depth = path.count("/")
     root = "../" * depth or "./"
     return f"""<!doctype html>
@@ -515,6 +592,7 @@ def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
         ),
         body=body,
         path=f"w/{wid}/",
+        extra_head=work_head_metadata(w, canonical_url(f"w/{wid}/")),
         island=True,
     )
 
