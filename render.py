@@ -75,6 +75,20 @@ def load_optional(name: str, default):
     return json.loads(path.read_text()) if path.exists() else default
 
 
+def search_index(works: list, authors: list, institutions: list, topics: list) -> list[dict]:
+    """Project browse indexes into the small, stable global search contract."""
+    return [
+        {"kind": kind, "id": row["id"], "label": row[label]}
+        for kind, label, rows in (
+            ("work", "title", works),
+            ("author", "name", authors),
+            ("institution", "name", institutions),
+            ("topic", "name", topics),
+        )
+        for row in rows
+    ]
+
+
 # -- chrome ---------------------------------------------------------------
 
 def page(*, title: str, description: str, body: str, path: str, extra_head: str = "",
@@ -1055,6 +1069,14 @@ def main() -> int:
     # The browse pages fetch these at runtime for search; the rest of the corpus
     # data is already baked into the HTML and is not shipped.
     (SITE / "data").mkdir(exist_ok=True)
+    total += write(
+        "data/search-index.json",
+        json.dumps(
+            search_index(works_index, authors_index, institutions_index, topics_index),
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+    )
     for name in (
         "works-index.json", "authors-index.json",
         "institutions-index.json", "topics-index.json",
