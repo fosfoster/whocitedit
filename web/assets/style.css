@@ -134,6 +134,18 @@ figure.graph figcaption { font-size: 12.5px; color: var(--ink-faint); margin-top
 .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-soft); margin-top: 8px; }
 .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
 
+.edge-evidence { margin-top: 24px; }
+.edge-evidence h2 { margin-bottom: 4px; }
+.edge-evidence-list { list-style: none; margin: 10px 0 0; padding: 0; border-top: 1px solid var(--rule); }
+.edge-evidence-list li { padding: 9px 0; border-bottom: 1px solid var(--rule); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: baseline; font-size: 13px; }
+.edge-pair { min-width: 0; }
+.edge-direction { padding: 0 7px; color: var(--ink-faint); }
+.edge-status { font-size: 12px; font-weight: 650; text-align: right; }
+.edge-status.corroborated { color: var(--high); }
+.edge-status.openalex-only { color: var(--medium); }
+.edge-status.opencitations-only { color: var(--low); }
+.edge-status.legacy { color: var(--ink-faint); }
+
 .withheld { border-left: 3px solid var(--medium); padding: 8px 0 8px 12px; color: var(--ink-soft); font-size: 13.5px; margin: 0 0 14px; }
 
 input[type=search] {
@@ -154,6 +166,8 @@ input[type=search]:focus-visible, a:focus-visible, button:focus-visible {
   .global-search { order: 3; flex-basis: 100%; }
   header.site nav { flex: 1 1 250px; justify-content: flex-end; }
   .global-search .search-results { position: static; margin-top: 5px; }
+  .edge-evidence-list li { grid-template-columns: 1fr; gap: 3px; }
+  .edge-status { text-align: left; }
 }
 
 /* Work-record quality reuses the confidence colours: the two bands say the same
