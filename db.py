@@ -83,6 +83,21 @@ CREATE TABLE IF NOT EXISTS work_payload (
 );
 CREATE INDEX IF NOT EXISTS work_payload_sha ON work_payload(raw_sha);
 
+-- A corpus can have several independently selected fields.  Keep their
+-- reviewable definitions normalized under stable keys, then associate source
+-- works with every field observation that selected them.
+CREATE TABLE IF NOT EXISTS corpus_field (
+  key        TEXT PRIMARY KEY,
+  definition TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS work_corpus_field (
+  work_id   TEXT NOT NULL REFERENCES work(id),
+  field_key TEXT NOT NULL REFERENCES corpus_field(key),
+  PRIMARY KEY (work_id, field_key)
+);
+CREATE INDEX IF NOT EXISTS work_corpus_field_field ON work_corpus_field(field_key);
+
 CREATE TABLE IF NOT EXISTS author (
   id             TEXT PRIMARY KEY,
   display_name   TEXT NOT NULL,

@@ -23,6 +23,7 @@ from pathlib import Path
 import graph
 import identity
 import quality
+from corpus_contract import normalize
 from db import DB_PATH, connect, set_meta
 from licensing import abstract_decision
 from openalex import short_id
@@ -31,18 +32,19 @@ from opencitations import normalize_doi
 ROOT = Path(__file__).parent
 RAW = ROOT / "harvest" / "raw"
 MANIFEST = ROOT / "harvest" / "manifest.jsonl"
+CORPUS = ROOT / "corpus.json"
 
 
-def _manifest_index() -> dict[str, dict]:
-    """sha256 -> the newest manifest record for it."""
-    index: dict[str, dict] = {}
+def _manifest_index() -> dict[str, list[dict]]:
+    """sha256 -> every manifest observation of that stored payload."""
+    index: dict[str, list[dict]] = {}
     if not MANIFEST.exists():
         return index
     for line in MANIFEST.read_text().splitlines():
         if not line.strip():
             continue
         rec = json.loads(line)
-        index[rec["sha256"]] = rec
+        index.setdefault(rec["sha256"], []).append(rec)
     return index
 
 
@@ -50,13 +52,16 @@ def _payloads():
     manifest = _manifest_index()
     for path in sorted(RAW.rglob("*.json")):
         sha = path.stem
-        rec = manifest.get(sha) or {
+        observations = manifest.get(sha) or [{
             "url": "unknown",
             "fetched_at": "unknown",
             "path": str(path.relative_to(ROOT)),
             "sha256": sha,
-        }
-        yield rec, json.loads(path.read_text())
+        }]
+        # The raw table still has one provenance record per payload.  Keep the
+        # previous newest-observation behaviour for that record while carrying
+        # every observation below for field membership.
+        yield observations[-1], observations, json.loads(path.read_text())
 
 
 def _is_work(obj: dict) -> bool:
@@ -67,12 +72,58 @@ def _is_author(obj: dict) -> bool:
     return "display_name" in obj and "works_count" in obj and "authorships" not in obj
 
 
+def _load_fields(conn) -> dict[str, dict]:
+    definitions = normalize(json.loads(CORPUS.read_text()))
+    if not definitions:
+        raise ValueError("corpus must define at least one field")
+    conn.executemany(
+        "INSERT INTO corpus_field(key, definition) VALUES(?, ?)",
+        [
+            (key, json.dumps(definition, sort_keys=True, separators=(",", ":")))
+            for key, definition in sorted(definitions.items())
+        ],
+    )
+    return definitions
+
+
+def _field_keys(observations: list[dict], definitions: dict[str, dict], sha: str) -> list[str]:
+    """Return all configured fields that selected a source-work payload."""
+    keys: set[str] = set()
+    unknown = []
+    missing = False
+    for rec in observations:
+        if "field_key" not in rec:
+            missing = True
+            continue
+        key = rec["field_key"]
+        if not isinstance(key, str) or key not in definitions:
+            unknown.append(key)
+            continue
+        keys.add(key)
+    if unknown:
+        raise ValueError(
+            f"unknown field membership {unknown!r} for work payload {sha}"
+        )
+    if missing and len(definitions) > 1:
+        raise ValueError(
+            f"missing field membership for work payload {sha} in a multi-field corpus"
+        )
+    if not keys:
+        if len(definitions) == 1:
+            # Old manifests predate field_key.  Their sole corpus definition is
+            # unambiguous, so preserve that corpus rather than discarding it.
+            return [next(iter(definitions))]
+        raise ValueError(f"missing field membership for work payload {sha}")
+    return sorted(keys)
+
+
 def load(conn) -> dict:
     stats = {"payloads": 0, "works": 0, "authors": 0, "authorships": 0}
     references: dict[str, list[str]] = {}
     coci_assertions: list[tuple[str, str]] = []
+    definitions = _load_fields(conn)
 
-    for rec, payload in _payloads():
+    for rec, observations, payload in _payloads():
         stats["payloads"] += 1
         conn.execute(
             "INSERT OR REPLACE INTO raw_payload(sha256, url, fetched_at, path) "
@@ -92,7 +143,12 @@ def load(conn) -> dict:
             continue
         for obj in payload.get("results") or []:
             if _is_work(obj):
-                references[_insert_work(conn, obj, rec["sha256"])] = [
+                wid = _insert_work(conn, obj, rec["sha256"])
+                conn.executemany(
+                    "INSERT OR IGNORE INTO work_corpus_field(work_id, field_key) VALUES(?, ?)",
+                    [(wid, field_key) for field_key in _field_keys(observations, definitions, rec["sha256"])],
+                )
+                references[wid] = [
                     short_id(r) for r in (obj.get("referenced_works") or [])
                 ]
                 stats["works"] += 1

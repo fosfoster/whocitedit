@@ -103,6 +103,13 @@ def _provenance(conn, sha: str | None) -> str | None:
 
 def work_payload(conn, row, neighbourhood) -> dict:
     wid = row["id"]
+    fields = [
+        r["field_key"]
+        for r in conn.execute(
+            "SELECT field_key FROM work_corpus_field WHERE work_id = ? ORDER BY field_key",
+            (wid,),
+        )
+    ]
     authors = [
         {
             "id": r["author_id"],
@@ -155,6 +162,7 @@ def work_payload(conn, row, neighbourhood) -> dict:
         },
         "authors": authors,
         "topics": topics,
+        "fields": fields,
         "graph": neighbourhood,
         "raw": _provenance(conn, row["raw_sha"]),
         "openalex_url": f"https://openalex.org/{wid}",
@@ -608,6 +616,7 @@ def main() -> int:
                 "n_authors": len(payload["authors"]),
                 "oa": bool(row["is_oa"]),
                 "quality": row["quality"] or quality.COMPLETE,
+                "fields": payload["fields"],
             }
         )
     total_bytes = 0
@@ -739,6 +748,10 @@ def main() -> int:
 
     # -- corpus ----------------------------------------------------------
     definition = json.loads((ROOT / "corpus.json").read_text())
+    fields = {
+        row["key"]: json.loads(row["definition"])
+        for row in conn.execute("SELECT key, definition FROM corpus_field ORDER BY key")
+    }
     bands_count = {b: sum(1 for a in author_index if a["band"] == b) for b in ("high", "medium", "low")}
     withheld = conn.execute(
         "SELECT abstract_reason, COUNT(*) c FROM work GROUP BY abstract_reason"
@@ -747,6 +760,7 @@ def main() -> int:
         OUT / "corpus.json",
         {
             "definition": definition,
+            "fields": fields,
             "derived_at": get_meta(conn, "derived_at"),
             "counts": {
                 "works": len(work_index),
