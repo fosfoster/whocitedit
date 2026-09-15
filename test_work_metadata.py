@@ -109,7 +109,8 @@ def main() -> int:
     hostile = render_work(work(title=hostile_title, authors=[{"id": "A1", "name": hostile_name}]))
     hostile_tags, hostile_block, hostile_ld = metadata(hostile)
     hostile_ld = hostile_ld or {}
-    bad += check(hostile.count("</script>") == 2, "hostile value terminated the JSON-LD script")
+    bad += check(hostile.count("</script>") == complete.count("</script>"),
+                 "hostile value terminated the JSON-LD script")
     bad += check("<img src=x" not in hostile, "hostile value created markup")
     bad += check(hostile_tags.get("citation_title") == [hostile_title], "hostile citation title changed")
     bad += check(hostile_ld.get("name") == hostile_title
