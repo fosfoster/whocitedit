@@ -43,6 +43,24 @@ def declaration_block(css, selector):
     return match.group(1) if match else ""
 
 
+def has_visible_outline(declarations):
+    match = re.search(r"(?:^|;)\s*outline\s*:\s*([^;]+)", declarations, re.I)
+    if not match:
+        return False
+    value = match.group(1).strip().lower()
+    width = re.search(r"(?<![\w.-])(\d*\.?\d+)([a-z]+)(?![\w.-])", value)
+    style = re.search(
+        r"(?<![\w-])(auto|dotted|dashed|solid|double|groove|ridge|inset|outset)(?![\w-])",
+        value,
+    )
+    return (
+        width is not None
+        and float(width.group(1)) > 0
+        and style is not None
+        and re.search(r"(?<![\w-])transparent(?![\w-])", value) is None
+    )
+
+
 def list_links(page):
     match = re.search(r'<ol class="collaborator-list">(.*?)</ol>', page, re.S)
     if not match:
@@ -135,7 +153,7 @@ def main() -> int:
     bad += check("display: grid" in list_css
                  and "repeat(auto-fit, minmax(" in list_css,
                  "collaborator list is not a responsive grid")
-    bad += check(re.search(r"\boutline\s*:\s*(?!none\b)[^;]+", focus_css) is not None,
+    bad += check(has_visible_outline(focus_css),
                  "collaborator list links have no visible focus selector")
 
     empty_graph = {
