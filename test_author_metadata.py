@@ -97,7 +97,11 @@ def main() -> int:
     hostile = render_author(author(name=hostile_name))
     _, hostile_blocks, hostile_people = metadata(hostile)
     hostile_person = hostile_people[0] if hostile_people else {}
-    bad += check(hostile.count("</script>") == 2 and "<img src=x" not in hostile,
+    # Compare against a clean render's own script-tag count rather than a
+    # hardcoded number, so this only fails if the hostile name adds a script
+    # tag of its own, not whenever the shared page chrome gains one.
+    bad += check(hostile.count("</script>") == complete.count("</script>")
+                 and "<img src=x" not in hostile,
                  "hostile name escaped the JSON-LD script")
     bad += check(hostile_person.get("name") == hostile_name
                  and hostile_blocks and "\\u003c/script\\u003e" in hostile_blocks[0],
