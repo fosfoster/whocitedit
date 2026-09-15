@@ -481,13 +481,15 @@ def bar_chart(pairs: list[tuple[int, int]], *, label: str, width: int = 980, hei
 </figure>'''
 
 
-def stacked_bar(segments: list[tuple[str, int, str]], *, label: str, width: int = 470) -> str:
+def stacked_bar(segments: list[tuple[str, int, str]], *, label: str, width: int = 470,
+                links: dict[str, str] | None = None) -> str:
     """A 100% bar for a three-way split, with every segment directly labelled.
 
     Status colours, not series colours -- and each one carries its own word, so
     the colour never has to be read on its own.
     """
     total = sum(v for _, v, _ in segments) or 1
+    links = links or {}
     height, gap = 30, 2
     x = 0.0
     rects, legend = [], []
@@ -498,8 +500,12 @@ def stacked_bar(segments: list[tuple[str, int, str]], *, label: str, width: int 
             f'<rect class="seg-{tone}" x="{x:.1f}" y="0" width="{w:.1f}" height="{height}" rx="3">'
             f'<title>{e(name)}: {num(value)} ({value / total:.0%})</title></rect>'
         )
+        count = (
+            f'<a class="chart-cohort-link" href="{e(links[name])}"><b>{num(value)}</b></a>'
+            if name in links else f'<b>{num(value)}</b>'
+        )
         legend.append(
-            f'<span><i class="legend-{tone}"></i>{e(name)} <b>{num(value)}</b> '
+            f'<span><i class="legend-{tone}"></i>{e(name)} {count} '
             f'<span class="faint">{value / total:.0%}</span></span>'
         )
         x += w + gap
@@ -874,10 +880,12 @@ def render_home(corpus: dict, works: list, authors: list) -> str:
 <div class="grid two-even">
 {stacked_bar([("high", ident["high"], "good"), ("medium", ident["medium"], "warning"),
               ("low", ident["low"], "critical")],
-             label="Is each author record one person?")}
+             label="Is each author record one person?",
+             links={"low": "authors/low-confidence/"})}
 {stacked_bar([("complete", q["complete"], "good"), ("partial", q["partial"], "warning"),
               ("suspect", q["suspect"], "critical")],
-             label="Does each paper record agree with itself?")}
+             label="Does each paper record agree with itself?",
+             links={"partial": "works/partial/", "suspect": "works/suspect/"})}
 </div>
 
 <h2>Most cited</h2>

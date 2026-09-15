@@ -239,3 +239,6 @@ input[type=search] {
 .chart-legend i.legend-warning { background: #fab219; }
 .chart-legend i.legend-critical { background: #d03b3b; }
 .chart-legend b { font-variant-numeric: tabular-nums; }
+.chart-legend .chart-cohort-link { color: inherit; text-decoration-color: currentColor; text-underline-offset: 2px; }
+.chart-legend .chart-cohort-link:hover { color: var(--accent); text-decoration-thickness: 2px; }
+.chart-legend .chart-cohort-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 2px; }
