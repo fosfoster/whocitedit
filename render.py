@@ -68,6 +68,25 @@ def citation_tag(name: str, value) -> str:
     return f'<meta name="{e(name)}" content="{e(value)}">' if value else ""
 
 
+def author_head_metadata(a: dict, canonical: str) -> str:
+    """Person metadata limited to the author record's public identities."""
+    person = {
+        "@context": "https://schema.org",
+        "@type": "Person",
+        "@id": canonical,
+        "url": canonical,
+        "name": a["name"],
+    }
+    identities = []
+    if a.get("openalex_url"):
+        identities.append(a["openalex_url"])
+    if a.get("orcid"):
+        identities.append(f'https://orcid.org/{a["orcid"]}')
+    if identities:
+        person["sameAs"] = identities
+    return json_ld(person)
+
+
 def work_head_metadata(w: dict, canonical: str) -> str:
     """Citation and CreativeWork metadata using only the exported work fields."""
     citation = [
@@ -101,6 +120,8 @@ def work_head_metadata(w: dict, canonical: str) -> str:
         if author.get("name"):
             person["name"] = author["name"]
         if author.get("id"):
+            person["@id"] = canonical_url(f'a/{author["id"]}/')
+            person["url"] = person["@id"]
             person["sameAs"] = f'https://openalex.org/{author["id"]}'
         if len(person) > 1:
             authors.append(person)
@@ -714,6 +735,7 @@ def render_author(a: dict, notes: dict, bands: dict, payloads: dict,
         ),
         body=body,
         path=f"a/{a['id']}/",
+        extra_head=author_head_metadata(a, canonical_url(f"a/{a['id']}/")),
         island=True,
     )
 
