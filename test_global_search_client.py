@@ -117,9 +117,12 @@ def main() -> int:
             "matches.slice(0, MAX_RESULTS)",
             "document.createTextNode(label)",
             "meta.textContent = detail;",
+            "globalTypes[row.kind]",
+            "encodeURIComponent(row.id)",
             "No results match your search.",
             "Search is unavailable. Please try again.",
             "data-collection-search",
+            "fetch(box.dataset.index)",
             "table.hidden = false;",
             "table.hidden = true;",
         )
@@ -134,6 +137,15 @@ def main() -> int:
         bad += check("data-index=\"../data/works-index.json\"" in
                      (render.SITE / "works" / "index.html").read_text(),
                      "browse search no longer names its copied local index")
+
+        css = (Path(__file__).parent / "web" / "assets" / "style.css").read_text()
+        bad += check(".search-results a {" in css,
+                     "global result links lack a usable block layout")
+        bad += check("@media (max-width: 760px)" in css
+                     and ".global-search .search-results { position: static;" in css,
+                     "header results lack narrow-width styling")
+        bad += check(":focus-visible" in css and "outline:" in css,
+                     "search controls and results lack visible keyboard focus")
 
         readme = (Path(__file__).parent / "README.md").read_text()
         bad += check("does not\nrequest its local index until the reader enters a non-empty query" in readme

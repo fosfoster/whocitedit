@@ -144,9 +144,9 @@ input[type=search]:focus-visible, a:focus-visible, button:focus-visible {
   outline: 3px solid var(--accent-soft); outline-offset: 3px;
 }
 .hits { margin-top: 10px; }
-.hits a { display: block; padding: 7px 0; border-bottom: 1px solid var(--rule); text-decoration: none; color: var(--ink); font-size: 14px; }
-.hits a:hover { color: var(--accent); }
-.hits small { color: var(--ink-faint); }
+.hits a, .search-results a { display: block; padding: 7px 0; border-bottom: 1px solid var(--rule); text-decoration: none; color: var(--ink); font-size: 14px; }
+.hits a:hover, .search-results a:hover { color: var(--accent); }
+.hits small, .search-results small { color: var(--ink-faint); }
 
 @media (max-width: 760px) {
   header.site .wrap { align-items: stretch; }
