@@ -356,6 +356,27 @@ def badge(band, hide=None) -> str:
     return '<span class="badge %s">%s</span>' % (e(band), e(band))
 
 
+def cohort_summary(authors: list[dict], works: list[dict]) -> str:
+    """Show every uncertainty band, counted from the complete page lists."""
+    groups = (
+        ("identity", "Identity confidence", authors, "confidence", ("high", "medium", "low")),
+        ("quality", "Record quality", works, "quality", ("complete", "partial", "suspect")),
+    )
+    summary = []
+    for cohort, title, members, field, bands in groups:
+        counts = {band: sum(member.get(field) == band for member in members) for band in bands}
+        rows = "".join(
+            f'<li data-band="{band}"><span class="badge {band}">{band}</span>'
+            f'<b>{num(counts[band])}</b></li>'
+            for band in bands
+        )
+        summary.append(
+            f'<section class="cohort-group" data-cohort="{cohort}"><p>{title}</p>'
+            f'<ul class="cohort-bands">{rows}</ul></section>'
+        )
+    return f'<div class="cohort-summary" aria-label="Cohort summary">{"".join(summary)}</div>'
+
+
 def evidence_html(evidence: list[dict], notes: dict) -> str:
     rows = []
     for item in evidence:
@@ -694,18 +715,21 @@ def render_author(a: dict, notes: dict, bands: dict, payloads: dict,
 def render_institution(i: dict, payloads: dict, author_ids: set[str],
                        work_ids: set[str]) -> str:
     iid = i["id"]
+    author_members = i.get("authors", [])
+    work_members = i.get("works", [])
     authors = "".join(
         f'<tr><td>{entity_link("a", a, author_ids)}</td>'
         f'<td class="num">{num(a.get("works") or 0)}</td>'
         f'<td class="num">{num(a.get("cited_by_count") or 0)}</td>'
-        f'<td>{e(a.get("confidence") or "")}</td></tr>'
-        for a in i.get("authors", [])
+        f'<td>{badge(a.get("confidence"))}</td></tr>'
+        for a in author_members
     )
     works = "".join(
         f'<tr><td>{entity_link("w", w, work_ids)}</td>'
         f'<td class="num">{e(w.get("year") or "")}</td>'
-        f'<td class="num">{num(w.get("cited") or 0)}</td></tr>'
-        for w in i.get("works", [])
+        f'<td class="num">{num(w.get("cited") or 0)}</td>'
+        f'<td>{badge(w.get("quality"))}</td></tr>'
+        for w in work_members
     )
     graph = i.get("graph") or {}
     href = {n["id"]: f"../../a/{n['id']}/" for n in graph.get("nodes", []) if n["id"] in author_ids}
@@ -718,7 +742,7 @@ def render_institution(i: dict, payloads: dict, author_ids: set[str],
         f'<a href="{e(i["openalex_url"])}">OpenAlex record</a>'
         if i.get("openalex_url") else ""
     )
-    empty = not i.get("authors") and not i.get("works")
+    empty = not author_members and not work_members
     empty_note = (
         '<p class="withheld">This institution is present only as a last-known '
         'institution in author payloads. No work in this corpus carries an '
@@ -728,11 +752,12 @@ def render_institution(i: dict, payloads: dict, author_ids: set[str],
     )
     body = f"""
 <h1>{e(i["name"])}</h1>
-<p class="meta">{num(len(i.get("authors", [])))} author(s) &middot;
-   {num(len(i.get("works", [])))} work(s)
+<p class="meta">{num(len(author_members))} author(s) &middot;
+   {num(len(work_members))} work(s)
    {" &middot; " + e(metadata["country_code"]) if metadata.get("country_code") else ""}
    {" &middot; " + e(metadata["type"]) if metadata.get("type") else ""}</p>
 {empty_note}
+{cohort_summary(author_members, work_members)}
 <div class="grid two">
 <div>
   {svg_graph(graph, href, caption, kind="collaboration", focus="", href_prefix="../../")}
@@ -746,8 +771,8 @@ def render_institution(i: dict, payloads: dict, author_ids: set[str],
 </div>
 <div>
   <div class="panel"><h2>Works</h2>
-  <div class="scroll"><table><thead><tr><th>Title</th><th class="num">Year</th><th class="num">Cited</th></tr></thead>
-    <tbody>{works or '<tr><td class="faint" colspan="3">None affiliated in this corpus.</td></tr>'}</tbody>
+  <div class="scroll"><table><thead><tr><th>Title</th><th class="num">Year</th><th class="num">Cited</th><th>Quality</th></tr></thead>
+    <tbody>{works or '<tr><td class="faint" colspan="4">None affiliated in this corpus.</td></tr>'}</tbody>
   </table></div></div>
   <div class="panel"><h2>Details</h2>
     <p>{openalex_link}</p>
@@ -769,17 +794,21 @@ def render_institution(i: dict, payloads: dict, author_ids: set[str],
 
 
 def render_topic(t: dict, payloads: dict, work_ids: set[str], author_ids: set[str]) -> str:
+    work_members = t.get("works", [])
+    author_members = t.get("authors", [])
     works = "".join(
         f'<tr><td>{entity_link("w", w, work_ids)}</td>'
         f'<td class="num">{e(w.get("year") or "")}</td>'
-        f'<td class="num">{num(w.get("cited") or 0)}</td></tr>'
-        for w in t.get("works", [])
+        f'<td class="num">{num(w.get("cited") or 0)}</td>'
+        f'<td>{badge(w.get("quality"))}</td></tr>'
+        for w in work_members
     )
     authors = "".join(
         f'<tr><td>{entity_link("a", a, author_ids)}</td>'
         f'<td class="num">{num(a.get("participation") or 0)}</td>'
-        f'<td class="num">{num(a.get("cited_by_count") or 0)}</td></tr>'
-        for a in t.get("authors", [])
+        f'<td class="num">{num(a.get("cited_by_count") or 0)}</td>'
+        f'<td>{badge(a.get("confidence"))}</td></tr>'
+        for a in author_members
     )
     metadata = t.get("metadata") or {}
     openalex_link = (
@@ -788,22 +817,23 @@ def render_topic(t: dict, payloads: dict, work_ids: set[str], author_ids: set[st
     )
     body = f"""
 <h1>{e(t["name"])}</h1>
-<p class="meta">{num(len(t.get("works", [])))} work(s) &middot;
-   {num(len(t.get("authors", [])))} participating author(s)
+<p class="meta">{num(len(work_members))} work(s) &middot;
+   {num(len(author_members))} participating author(s)
    {" &middot; " + e(metadata["field"]) if metadata.get("field") else ""}
    {" &middot; " + e(metadata["domain"]) if metadata.get("domain") else ""}</p>
+{cohort_summary(author_members, work_members)}
 <div class="grid two">
 <div>
   <h2>Citation-ranked works</h2>
   <div class="scroll"><table>
-    <thead><tr><th>Title</th><th class="num">Year</th><th class="num">Cited</th></tr></thead>
-    <tbody>{works or '<tr><td class="faint" colspan="3">No works in this corpus.</td></tr>'}</tbody>
+    <thead><tr><th>Title</th><th class="num">Year</th><th class="num">Cited</th><th>Quality</th></tr></thead>
+    <tbody>{works or '<tr><td class="faint" colspan="4">No works in this corpus.</td></tr>'}</tbody>
   </table></div>
 </div>
 <div>
   <div class="panel"><h2>Participating authors</h2>
-  <div class="scroll"><table><thead><tr><th>Author</th><th class="num">Works</th><th class="num">Cited</th></tr></thead>
-    <tbody>{authors or '<tr><td class="faint" colspan="3">No authors in this corpus.</td></tr>'}</tbody>
+  <div class="scroll"><table><thead><tr><th>Author</th><th class="num">Works</th><th class="num">Cited</th><th>Identity</th></tr></thead>
+    <tbody>{authors or '<tr><td class="faint" colspan="4">No authors in this corpus.</td></tr>'}</tbody>
   </table></div></div>
   <div class="panel"><h2>Details</h2>
     <p>{openalex_link}</p>

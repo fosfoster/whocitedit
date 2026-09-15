@@ -27,6 +27,22 @@ def internal_links(site: Path):
             yield page, href
 
 
+def cohort_counts(page: str, cohort: str) -> dict[str, int]:
+    group = re.search(
+        rf'<section class="cohort-group" data-cohort="{cohort}">(.*?)</section>',
+        page,
+        re.DOTALL,
+    )
+    if not group:
+        return {}
+    return {
+        band: int(count.replace(",", ""))
+        for band, count in re.findall(
+            r'<li data-band="([^"]+)">.*?<b>([\d,]+)</b></li>', group.group(1), re.DOTALL
+        )
+    }
+
+
 def main() -> int:
     bad = 0
     tmp = Path(tempfile.mkdtemp())
@@ -85,6 +101,47 @@ def main() -> int:
                      "topic page lost work/author links")
         bad += check(topic.index("W1") < topic.index("W2") < topic.index("W3"),
                      "topic works are not citation-ranked")
+
+        # Detail-page cohort totals derive from the full exported member lists,
+        # not the institution graph's truncated nodes or ranking display.
+        expected_identity = {"high": 9, "medium": 9, "low": 8}
+        expected_quality = {"complete": 1, "partial": 1, "suspect": 1}
+        for label, entity_page in (("institution", institution), ("topic", topic)):
+            identity_counts = cohort_counts(entity_page, "identity")
+            quality_counts = cohort_counts(entity_page, "quality")
+            bad += check(identity_counts == expected_identity,
+                         f"{label} identity cohorts omit or miscount a band")
+            bad += check(quality_counts == expected_quality,
+                         f"{label} quality cohorts omit or miscount a band")
+            bad += check(sum(identity_counts.values()) == 26,
+                         f"{label} identity cohorts do not total the author list")
+            bad += check(sum(quality_counts.values()) == 3,
+                         f"{label} quality cohorts do not total the work list")
+            for aid, band in test_entity_export.IDENTITY_BANDS.items():
+                bad += check(re.search(
+                    rf'<tr><td><a href="../../a/{aid}/">Author {aid}</a></td>.*?'
+                    rf'<span class="badge {band}">{band}</span></td></tr>',
+                    entity_page,
+                    re.DOTALL,
+                ) is not None, f"{label} author {aid} is unlinked or lacks its {band} badge")
+            for wid, band in test_entity_export.QUALITY_BANDS.items():
+                bad += check(re.search(
+                    rf'<tr><td><a href="../../w/{wid}/">.*?</a></td>.*?'
+                    rf'<span class="badge {band}">{band}</span></td></tr>',
+                    entity_page,
+                    re.DOTALL,
+                ) is not None, f"{label} work {wid} is unlinked or lacks its {band} badge")
+
+        bad += check(cohort_counts(last_known, "identity") == {"high": 0, "medium": 0, "low": 0},
+                     "last-known institution identity cohorts are not explicit zeroes")
+        bad += check(cohort_counts(last_known, "quality") ==
+                     {"complete": 0, "partial": 0, "suspect": 0},
+                     "last-known institution quality cohorts are not explicit zeroes")
+        bad += check('href="../../a/' not in last_known and 'href="../../w/' not in last_known,
+                     "last-known institution fabricated linked members")
+        stylesheet = (render.ASSETS / "style.css").read_text()
+        bad += check(".cohort-summary" in stylesheet and "@media (max-width: 560px)" in stylesheet,
+                     "cohort summary lacks responsive styling")
 
         # The institution graph is the export's coordinates rendered as inline
         # SVG; no reader-side force simulation is allowed on this page.
