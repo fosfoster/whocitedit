@@ -151,6 +151,41 @@ def work_head_metadata(w: dict, canonical: str) -> str:
     return "\n".join(tag for tag in citation if tag) + "\n" + json_ld(creative_work)
 
 
+def bibtex_escape(value) -> str:
+    """Escape a UTF-8 value for a braced BibTeX field."""
+    escaped = []
+    for char in str(value):
+        escaped.append({
+            "\\": r"\textbackslash{}",
+            "{": r"\{",
+            "}": r"\}",
+            "#": r"\#",
+            "$": r"\$",
+            "%": r"\%",
+            "&": r"\&",
+            "_": r"\_",
+            "~": r"\textasciitilde{}",
+            "^": r"\textasciicircum{}",
+        }.get(char, char))
+    return "".join(escaped)
+
+
+def work_bibtex(w: dict) -> str:
+    """A small, deterministic citation from fields already rendered on a work page."""
+    source = w.get("source") or {}
+    authors = [author.get("name") for author in w.get("authors", []) if author.get("name")]
+    fields = [
+        ("author", " and ".join(authors)),
+        ("title", w.get("title")),
+        ("year", w.get("year")),
+        ("howpublished", source.get("name")),
+        ("doi", w.get("doi")),
+    ]
+    rendered = [f"  {name} = {{{bibtex_escape(value)}}}" for name, value in fields if value]
+    body = ",\n".join(rendered)
+    return f"@misc{{{w['id']},\n" + (f"{body}\n" if body else "") + "}\n"
+
+
 
 def _display(path: Path) -> str:
     """Repo-relative when it can be, absolute otherwise.
@@ -245,7 +280,7 @@ def page(*, title: str, description: str, body: str, path: str, extra_head: str 
 def write(path: str, content: str) -> int:
     out = SITE / path
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(content)
+    out.write_text(content, encoding="utf-8")
     return len(content)
 
 
@@ -1229,6 +1264,7 @@ def main() -> int:
                 f"w/{wid}/index.html",
                 render_work(w, author_names, titles, payloads, quality_notes, topic_ids),
             )
+            total += write(f"w/{wid}/citation.bib", work_bibtex(w))
             n += 1
 
     for shard in sorted((DATA / "authors").glob("*.json")):
