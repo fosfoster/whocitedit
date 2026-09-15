@@ -691,7 +691,7 @@ def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
         f'<td class="faint">{e(t["field"] or "")}</td></tr>'
         for t in w["topics"]
     )
-    links = []
+    links = ['<a href="citation.bib" download>Download BibTeX</a>']
     if w["doi"]:
         links.append(f'<a href="{e(w["doi"])}">DOI</a>')
     if w["oa"]["url"]:
