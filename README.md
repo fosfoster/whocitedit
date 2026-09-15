@@ -19,7 +19,11 @@ stored OpenAlex payloads, `export_json.py` turns it into content-addressed,
 sharded JSON (including entity indexes and aggregate payload provenance), and
 `render.py` turns those shards into static HTML. Work, author, institution, and
 topic detail pages are linked to one another where the corresponding shard is
-present; browse pages use only copied local indexes for search. A legacy
+present; `render.py` also writes one compact `web/site/data/search-index.json`
+and gives every generated page a deferred header search. That search does not
+request its local index until the reader enters a non-empty query; browse pages
+continue to use their own copied collection indexes. There is no search service,
+server endpoint, or Node runtime involved. A legacy
 `web/data/` release without institution or topic indexes still renders its
 existing pages, with empty collection browses and no dangling new detail links.
 

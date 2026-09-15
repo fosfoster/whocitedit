@@ -190,6 +190,14 @@ def page(*, title: str, description: str, body: str, path: str, extra_head: str 
 <body>
 <header class="site"><div class="wrap">
   <a class="brand" href="{root}">{SITE_NAME}</a>
+  <form class="global-search" role="search" data-global-search
+        data-index="{root}data/search-index.json" data-root="{root}">
+    <label class="sr-only" for="global-q">Search the corpus</label>
+    <input type="search" id="global-q" placeholder="Search papers, authors, institutions, and topics"
+           data-search-input aria-controls="global-results" autocomplete="off">
+    <div class="search-results" id="global-results" role="region" aria-live="polite"
+         aria-label="Global search results"></div>
+  </form>
   <nav>
     <a href="{root}works/">Papers</a>
     <a href="{root}authors/">Authors</a>
@@ -201,6 +209,7 @@ def page(*, title: str, description: str, body: str, path: str, extra_head: str 
 <main class="wrap">
 {body}
 </main>
+<script src="{root}assets/app.js" defer></script>
 {'<script src="' + root + 'assets/islands.js" defer></script>' if island else ''}
 <footer class="site"><div class="wrap">
   <p>Built from <a href="https://openalex.org">OpenAlex</a>, which publishes its data under CC0.
@@ -940,11 +949,12 @@ def render_browse(kind: str, rows: list, corpus: dict) -> str:
 <h1>{title}</h1>
 <p class="lede">{num(len(rows))} in this corpus. The table shows the first 400; search the
    whole set below.</p>
-<input type="search" id="q" placeholder="Search all {num(len(rows))} {title.lower()}&hellip;"
-       data-index="../data/{index}" data-kind="{kind}" autocomplete="off">
-<div class="hits" id="hits"></div>
-<div class="scroll" id="table"><table><thead>{head}</thead><tbody>{body_rows}</tbody></table></div>
-<script src="../assets/app.js" defer></script>
+<label class="sr-only" for="collection-q">Search {title.lower()}</label>
+<input type="search" id="collection-q" placeholder="Search all {num(len(rows))} {title.lower()}&hellip;"
+       data-collection-search data-index="../data/{index}" data-kind="{kind}"
+       aria-controls="collection-results" autocomplete="off">
+<div class="hits" id="collection-results" role="status" aria-live="polite"></div>
+<div class="scroll" id="collection-table"><table><thead>{head}</thead><tbody>{body_rows}</tbody></table></div>
 """
     return page(
         title=f"{title} — {SITE_NAME}",
