@@ -16,6 +16,7 @@ def check(cond, msg):
 
 
 def declaration_block(css, selector):
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
     match = re.search(rf"(?m)^\s*{re.escape(selector)}\s*\{{([^}}]*)\}}", css)
     return match.group(1) if match else None
 
