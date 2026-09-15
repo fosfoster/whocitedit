@@ -133,6 +133,14 @@ figure.graph figcaption { font-size: 12.5px; color: var(--ink-faint); margin-top
 .edge.inner { stroke-dasharray: 2 3; }
 .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-soft); margin-top: 8px; }
 .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+.collaborator-list {
+  display: grid; grid-auto-flow: row; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 4px 16px; margin: 12px 0 0; padding-left: 24px; font-size: 13px;
+}
+.collaborator-list li { padding-left: 2px; }
+.collaborator-list a:focus-visible {
+  outline: 3px solid var(--accent-soft); outline-offset: 3px; border-radius: 2px;
+}
 
 .edge-evidence { margin-top: 24px; }
 .edge-evidence h2 { margin-bottom: 4px; }

@@ -817,6 +817,19 @@ def render_author(a: dict, notes: dict, bands: dict, payloads: dict,
 
     href = {n["id"]: f"../{n['id']}/" for n in a["graph"]["nodes"]}
     href[a["id"]] = ""
+    collaborators = [
+        n for n in a["graph"]["nodes"]
+        if n["kind"] == "coauthor" and n["id"] != a["id"]
+    ]
+    collaborator_list = (
+        '<ol class="collaborator-list">'
+        + "".join(
+            f'<li><a href="../{e(n["id"])}/">{e(n["label"])}</a></li>'
+            for n in collaborators
+        )
+        + "</ol>"
+        if collaborators else ""
+    )
     caption = (
         f'{a["graph"]["shown"]} of {a["graph"]["available"]} collaborators, ranked by '
         f'collaboration weight rather than by shared-paper count. Dashed lines are '
@@ -835,6 +848,7 @@ def render_author(a: dict, notes: dict, bands: dict, payloads: dict,
 <div class="grid two">
 <div>
   {svg_graph(a["graph"], href, caption, kind="collaboration", focus=a["id"], href_prefix="../")}
+  {collaborator_list}
   <div class="legend">
     <span><i style="background:var(--focus)"></i>{e(a["name"])}</span>
     <span><i style="background:var(--ref)"></i>collaborator</span>
