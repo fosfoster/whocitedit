@@ -5,6 +5,8 @@ import re
 import shutil
 import sys
 import tempfile
+from contextlib import redirect_stderr
+from io import StringIO
 from pathlib import Path
 
 import corpus_contract
@@ -169,6 +171,21 @@ def main() -> int:
         bad += check(member_ids(legacy_page.read_text() if legacy_page.exists() else "")
                      == [work["id"] for work in works],
                      "legacy field does not contain every work in works-index order")
+
+        # A partially present new surface is not a legacy release.  Reject it
+        # instead of silently assigning every work to the legacy field.
+        incomplete = tmp / "incomplete-data"
+        shutil.copytree(legacy, incomplete)
+        incomplete_works = json.loads((incomplete / "works-index.json").read_text())
+        incomplete_works[0]["fields"] = [legacy_key]
+        (incomplete / "works-index.json").write_text(json.dumps(incomplete_works))
+        render.DATA = incomplete
+        render.SITE = tmp / "incomplete-site"
+        error = StringIO()
+        with redirect_stderr(error):
+            incomplete_result = render.main()
+        bad += check(incomplete_result != 0 and "incomplete field export" in error.getvalue(),
+                     "partially present field export incorrectly used the legacy fallback")
     finally:
         render.DATA, render.SITE, render.ASSETS, render.NAV_FIELDS = saved
         shutil.rmtree(tmp, ignore_errors=True)

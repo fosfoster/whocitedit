@@ -1209,7 +1209,8 @@ def render_fields(fields: list[dict]) -> str:
     rows = "".join(
         f'<li><a href="{e(field["key"])}/">{e(field["name"])}</a>'
         f'<span>{num(field["works"])} papers</span>'
-        f'{f"<p>{e(field["description"])}</p>" if field.get("description") else ""}</li>'
+        + (f'<p>{e(field["description"])}</p>' if field.get("description") else "")
+        + "</li>"
         for field in fields
     )
     body = f"""
@@ -1443,8 +1444,10 @@ def main() -> int:
     quality_notes = corpus["quality_notes"]
 
     exported_fields = load_optional("fields-index.json", None)
-    has_memberships = all("fields" in work for work in works_index)
-    if exported_fields is None and (not works_index or not has_memberships):
+    membership_presence = ["fields" in work for work in works_index]
+    has_any_memberships = any(membership_presence)
+    has_all_memberships = all(membership_presence)
+    if exported_fields is None and not has_any_memberships:
         # Checked-in releases predating the membership export have only the
         # legacy top-level definition.  It is one field, and every indexed work
         # belongs to it; do not infer memberships from unrelated work metadata.
@@ -1457,7 +1460,7 @@ def main() -> int:
             "works": len(works_index),
         }]
         field_works = {field_key: works_index}
-    elif exported_fields is None or not has_memberships:
+    elif exported_fields is None or not has_all_memberships:
         print("incomplete field export: need both fields-index.json and work fields arrays", file=sys.stderr)
         return 1
     else:
