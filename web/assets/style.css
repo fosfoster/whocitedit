@@ -211,6 +211,7 @@ input[type=search]:focus-visible, a:focus-visible, button:focus-visible {
 .fg { position: relative; }
 .fg svg {
   width: 100%; height: auto; display: block; touch-action: none;
+  overflow: visible;
   background: var(--panel); border: 1px solid var(--rule); border-radius: 10px;
   cursor: grab;
 }
