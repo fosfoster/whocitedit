@@ -1,4 +1,5 @@
 """Offline end-to-end coverage for institution and topic entity exports."""
+from collections import Counter
 import hashlib
 import json
 import shutil
@@ -10,6 +11,13 @@ import db
 import derive
 import export_json
 import graph
+
+
+IDENTITY_BANDS = {
+    f"A{i:02d}": ("high", "medium", "low")[(i - 1) % 3]
+    for i in range(1, 27)
+}
+QUALITY_BANDS = {"W1": "complete", "W2": "partial", "W3": "suspect"}
 
 
 def check(cond, msg):
@@ -105,6 +113,14 @@ def build_corpus(tmp: Path) -> tuple[Path, set[str], str]:
     derive.load(conn)
     graph.build_coauthorship(conn, 2026)
     derive.score_identities(conn)
+    conn.executemany(
+        "UPDATE author SET confidence = ? WHERE id = ?",
+        ((band, aid) for aid, band in IDENTITY_BANDS.items()),
+    )
+    conn.executemany(
+        "UPDATE work SET quality = ? WHERE id = ?",
+        ((band, wid) for wid, band in QUALITY_BANDS.items()),
+    )
     conn.commit()
     conn.close()
     return tmp / "corpus.db", shas, author_sha
@@ -174,13 +190,22 @@ def main() -> int:
             "SELECT raw_sha FROM topic WHERE id = ?", (tid,)
         ).fetchone()["raw_sha"] for tid in topic_ids),
                      "a topic did not retain its metadata payload hash")
-        bad += check(institutions["I-AFF"]["works"] and
-                     {w["id"] for w in institutions["I-AFF"]["works"]} == {"W1", "W2", "W3"},
-                     "institution works were not selected through affiliation")
+        expected_author_ids = [f"A{i:02d}" for i in range(1, 27)]
+        expected_work_ids = ["W1", "W2", "W3"]
+        institution = institutions["I-AFF"]
+        bad += check([work["id"] for work in institution["works"]] == expected_work_ids,
+                     "institution works were not selected and ranked through affiliation")
+        bad += check([author["id"] for author in institution["authors"]] == expected_author_ids,
+                     "institution authors were not retained exactly once")
+        bad += check(Counter(work.get("quality") for work in institution["works"]) ==
+                     Counter(QUALITY_BANDS.values()),
+                     "institution works did not retain persisted quality bands")
+        bad += check({author["id"]: author.get("confidence") for author in institution["authors"]} ==
+                     IDENTITY_BANDS,
+                     "institution authors did not retain persisted identity confidence")
         bad += check(institutions["I-LAST"]["works"] == [] and
                      institutions["I-LAST"]["authors"] == [],
                      "last-known-only institution incorrectly gained affiliations")
-        bad += check(len(institutions["I-AFF"]["authors"]) == 26, "affiliated author list was truncated")
 
         graph_blob = institutions["I-AFF"]["graph"]
         graph_ids = {node["id"] for node in graph_blob["nodes"]}
@@ -196,11 +221,17 @@ def main() -> int:
         bad += check(all(len(topics[tid]["works"]) == 3 for tid in topics),
                      "fixture works did not retain their topic")
         topic = topics["T1"]
-        bad += check([work["id"] for work in topic["works"]] == ["W1", "W2", "W3"],
+        bad += check([work["id"] for work in topic["works"]] == expected_work_ids,
                      "topic works are not ranked by citation count")
-        bad += check(topic["authors"][0]["id"] == "A01" and
+        bad += check([author["id"] for author in topic["authors"]] == expected_author_ids and
                      topic["authors"][0]["participation"] == 3,
-                     "topic authors are not ranked by participation")
+                     "topic authors are not retained and ranked by participation")
+        bad += check(Counter(work.get("quality") for work in topic["works"]) ==
+                     Counter(QUALITY_BANDS.values()),
+                     "topic works did not retain persisted quality bands")
+        bad += check({author["id"]: author.get("confidence") for author in topic["authors"]} ==
+                     IDENTITY_BANDS,
+                     "topic authors did not retain persisted identity confidence")
 
         payloads = json.loads((data / "payloads.json").read_text())
         bad += check(set(payloads) == expected_payloads, "payloads.json lost a fixture payload")

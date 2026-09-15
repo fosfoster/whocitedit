@@ -331,6 +331,7 @@ def _work_brief(row) -> dict:
         "title": row["title"],
         "year": row["year"],
         "cited": row["cited_by_count"],
+        "quality": row["quality"],
     }
 
 
@@ -504,7 +505,7 @@ def institution_payload(conn, row: dict) -> dict:
     works = [
         _work_brief(work)
         for work in conn.execute(
-            "SELECT DISTINCT w.id, w.title, w.year, w.cited_by_count FROM affiliation af "
+            "SELECT DISTINCT w.id, w.title, w.year, w.cited_by_count, w.quality FROM affiliation af "
             "JOIN work w ON w.id = af.work_id WHERE af.institution_id = ? "
             "ORDER BY w.cited_by_count DESC, w.id",
             (iid,),
@@ -531,7 +532,7 @@ def topic_payload(conn, row) -> dict:
     works = [
         _work_brief(work)
         for work in conn.execute(
-            "SELECT w.id, w.title, w.year, w.cited_by_count FROM work_topic wt "
+            "SELECT w.id, w.title, w.year, w.cited_by_count, w.quality FROM work_topic wt "
             "JOIN work w ON w.id = wt.work_id WHERE wt.topic_id = ? "
             "ORDER BY w.cited_by_count DESC, w.id",
             (tid,),
@@ -543,9 +544,10 @@ def topic_payload(conn, row) -> dict:
             "name": author["display_name"],
             "participation": author["participation"],
             "cited_by_count": author["cited_by_count"],
+            "confidence": author["confidence"],
         }
         for author in conn.execute(
-            "SELECT au.id, au.display_name, au.cited_by_count, "
+            "SELECT au.id, au.display_name, au.confidence, au.cited_by_count, "
             "COUNT(DISTINCT a.work_id) AS participation "
             "FROM work_topic wt JOIN authorship a ON a.work_id = wt.work_id "
             "JOIN author au ON au.id = a.author_id WHERE wt.topic_id = ? "
