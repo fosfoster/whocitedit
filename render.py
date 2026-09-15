@@ -45,6 +45,31 @@ SITE_URL = "https://whocitedit.com"
 TAGLINE = "The citation and collaboration graph of open research, drawn and linked to its sources."
 
 
+# OpenAlex's work types are broader than RIS's record types. These mappings use
+# the more general RIS type where a work type does not have an exact equivalent.
+RIS_TYPES = {
+    "article": "JOUR",
+    "book": "BOOK",
+    "book-chapter": "CHAP",
+    "book-review": "JOUR",
+    "conference-abstract": "CONF",
+    "conference-paper": "CONF",
+    "data-paper": "JOUR",
+    "dataset": "DATA",
+    "dissertation": "THES",
+    "editorial": "JOUR",
+    "erratum": "JOUR",
+    "other": "GEN",
+    "paratext": "GEN",
+    "preprint": "UNPB",
+    "reference-entry": "GEN",
+    "report": "RPRT",
+    "review": "JOUR",
+    "software": "COMP",
+    "software-paper": "JOUR",
+}
+
+
 def e(s) -> str:
     return html.escape(str(s if s is not None else ""), quote=True)
 
@@ -184,6 +209,31 @@ def work_bibtex(w: dict) -> str:
     rendered = [f"  {name} = {{{bibtex_escape(value)}}}" for name, value in fields if value]
     body = ",\n".join(rendered)
     return f"@misc{{{w['id']},\n" + (f"{body}\n" if body else "") + "}\n"
+
+
+def ris_value(value) -> str:
+    """Keep a value on one RIS line, so it cannot introduce another tag."""
+    return str(value).replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
+
+
+def render_ris(w: dict) -> str:
+    """Serialize the bibliographic fields exported for one work as one RIS record."""
+    fields = [("TY", RIS_TYPES.get(w.get("type"), "GEN"))]
+
+    def add(tag: str, value) -> None:
+        if value is not None:
+            value = ris_value(value)
+            if value:
+                fields.append((tag, value))
+
+    add("TI", w.get("title"))
+    for author in w.get("authors") or []:
+        add("AU", author.get("name"))
+    add("PY", w.get("date") or w.get("year"))
+    add("T2", (w.get("source") or {}).get("name"))
+    add("DO", w.get("doi"))
+    fields.append(("ER", ""))
+    return "".join(f"{tag}  - {value}\n" for tag, value in fields)
 
 
 
@@ -1265,6 +1315,7 @@ def main() -> int:
                 render_work(w, author_names, titles, payloads, quality_notes, topic_ids),
             )
             total += write(f"w/{wid}/citation.bib", work_bibtex(w))
+            total += write(f"w/{wid}/citation.ris", render_ris(w))
             n += 1
 
     for shard in sorted((DATA / "authors").glob("*.json")):
