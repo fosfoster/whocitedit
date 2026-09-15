@@ -876,6 +876,53 @@ def render_browse(kind: str, rows: list, corpus: dict) -> str:
     )
 
 
+def render_cohort(kind: str, band: str, index_rows: list) -> str:
+    """Render an uncapped uncertainty cohort in its exported index order."""
+    if kind == "authors":
+        rows = [row for row in index_rows if row["band"] == band]
+        title = "Low-confidence authors"
+        description = "Author records whose identity confidence is low."
+        head = ('<tr><th>Author</th><th>Identity</th><th class="num">Works</th>'
+                '<th class="num">Collaborators</th><th class="num">Cited</th></tr>')
+        body_rows = "".join(
+            f'<tr><td><a href="../../a/{e(row["id"])}/">{e(row["name"])}</a></td>'
+            f'<td><span class="badge {row["band"]}">{row["band"]}</span></td>'
+            f'<td class="num">{num(row["works"])}</td><td class="num">{num(row["coauthors"])}</td>'
+            f'<td class="num">{num(row["cited"])}</td></tr>'
+            for row in rows
+        )
+        path = "authors/low-confidence/"
+        noun = "author records"
+    else:
+        rows = [row for row in index_rows if row["quality"] == band]
+        title = f"{band.capitalize()} paper records"
+        description = f"Paper records whose stored quality assessment is {band}."
+        head = ('<tr><th>Paper</th><th>Record</th><th class="num">Year</th>'
+                '<th class="num">Cited</th><th class="num">In corpus</th></tr>')
+        body_rows = "".join(
+            f'<tr><td><a href="../../w/{e(row["id"])}/">{e(row["title"])}</a>'
+            f'<br><span class="meta faint">{e(", ".join(row["authors"]))}</span></td>'
+            f'<td>{badge(row["quality"], hide="complete")}</td>'
+            f'<td class="num">{e(row["year"] or "")}</td><td class="num">{num(row["cited"])}</td>'
+            f'<td class="num">{num(row["in_corpus_cited"])}</td></tr>'
+            for row in rows
+        )
+        path = f"works/{band}/"
+        noun = "paper records"
+
+    body = f"""
+<h1>{title}</h1>
+<p class="lede">{num(len(rows))} {band} {noun} in this corpus. Every matching record is shown below.</p>
+<div class="scroll"><table><thead>{head}</thead><tbody>{body_rows}</tbody></table></div>
+"""
+    return page(
+        title=f"{title} — {SITE_NAME}",
+        description=f"{description} The complete cohort is shown in exported index order.",
+        body=body,
+        path=path,
+    )
+
+
 def render_methodology(corpus: dict) -> str:
     abstracts = corpus["abstracts"]
     src_rows = "".join(
@@ -1061,10 +1108,13 @@ def main() -> int:
     total += write("index.html", render_home(corpus, works_index, authors_index))
     total += write("works/index.html", render_browse("works", works_index, corpus))
     total += write("authors/index.html", render_browse("authors", authors_index, corpus))
+    total += write("authors/low-confidence/index.html", render_cohort("authors", "low", authors_index))
+    total += write("works/partial/index.html", render_cohort("works", "partial", works_index))
+    total += write("works/suspect/index.html", render_cohort("works", "suspect", works_index))
     total += write("institutions/index.html", render_browse("institutions", institutions_index, corpus))
     total += write("topics/index.html", render_browse("topics", topics_index, corpus))
     total += write("methodology/index.html", render_methodology(corpus))
-    n += 6
+    n += 9
 
     # The browse pages fetch these at runtime for search; the rest of the corpus
     # data is already baked into the HTML and is not shipped.
@@ -1091,7 +1141,8 @@ def main() -> int:
     write("robots.txt", f"User-agent: *\nAllow: /\nSitemap: {SITE_URL}/sitemap.xml\n")
     urls = "".join(
         f"<url><loc>{SITE_URL}/{p}</loc></url>"
-        for p in ["", "works/", "authors/", "institutions/", "topics/", "methodology/"]
+        for p in ["", "works/", "works/partial/", "works/suspect/", "authors/",
+                  "authors/low-confidence/", "institutions/", "topics/", "methodology/"]
         + [f"w/{w['id']}/" for w in works_index]
         + [f"a/{a['id']}/" for a in authors_index]
         + [f"i/{i['id']}/" for i in institutions_index]
