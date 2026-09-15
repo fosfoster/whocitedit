@@ -142,6 +142,26 @@ input[type=search] {
 .badge.partial { color: var(--medium); }
 .badge.suspect { color: var(--low); }
 
+.cohort-summary {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;
+  margin: 0 0 18px;
+}
+.cohort-group {
+  background: var(--panel); border: 1px solid var(--rule); border-radius: 8px;
+  padding: 10px 12px;
+}
+.cohort-group p {
+  margin: 0 0 7px; font-size: 11px; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--ink-faint); font-weight: 600;
+}
+.cohort-bands { display: flex; flex-wrap: wrap; gap: 5px 12px; list-style: none; margin: 0; padding: 0; }
+.cohort-bands li { display: inline-flex; align-items: center; gap: 5px; }
+.cohort-bands b { font-size: 13px; font-variant-numeric: tabular-nums; }
+@media (max-width: 560px) {
+  .cohort-summary { grid-template-columns: 1fr; }
+  .cohort-bands li { flex: 1 1 82px; }
+}
+
 /* ── Interactive graph islands ─────────────────────────────────────────────
    The static SVG above is the page; this is the upgrade that mounts over it.
    Every colour is a CSS custom property so a theme change needs no JavaScript
