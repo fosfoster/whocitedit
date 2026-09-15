@@ -149,7 +149,7 @@ input[type=search]:focus-visible, a:focus-visible, button:focus-visible {
 .hits small, .search-results small { color: var(--ink-faint); }
 
 @media (max-width: 760px) {
-  header.site .wrap { align-items: stretch; }
+  header.site .wrap { align-items: stretch; flex-wrap: wrap; }
   header.site .brand { align-self: center; }
   .global-search { order: 3; flex-basis: 100%; }
   header.site nav { flex: 1 1 250px; justify-content: flex-end; }

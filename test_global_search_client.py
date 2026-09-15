@@ -144,6 +144,9 @@ def main() -> int:
         bad += check("@media (max-width: 760px)" in css
                      and ".global-search .search-results { position: static;" in css,
                      "header results lack narrow-width styling")
+        bad += check("@media (max-width: 760px) {\n"
+                     "  header.site .wrap { align-items: stretch; flex-wrap: wrap; }" in css,
+                     "header search does not wrap onto a full-width row at narrow widths")
         bad += check(":focus-visible" in css and "outline:" in css,
                      "search controls and results lack visible keyboard focus")
 
