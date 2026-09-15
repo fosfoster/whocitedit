@@ -566,6 +566,49 @@ def neighbour_list(w: dict, kind: str, heading: str) -> str:
 </table></div>"""
 
 
+def citation_edge_status(edge: dict) -> tuple[str, str]:
+    """Return a stable machine name and reader-facing source assessment."""
+    raw_sources = edge.get("sources") or []
+    sources = {raw_sources} if isinstance(raw_sources, str) else set(raw_sources)
+    if {"openalex", "opencitations"} <= sources:
+        return "corroborated", "Corroborated — OpenAlex and OpenCitations"
+    if "openalex" in sources:
+        return "openalex-only", "OpenAlex only"
+    if "opencitations" in sources:
+        return "opencitations-only", "OpenCitations only — unconfirmed by OpenAlex"
+    return "legacy", "Legacy edge — source detail unavailable"
+
+
+def citation_edge_evidence(g: dict) -> str:
+    """Render one durable evidence row for every directed work-graph edge."""
+    edges = g.get("edges") or []
+    labels = {
+        node["id"]: node.get("label") or node.get("name") or node["id"]
+        for node in (g.get("nodes") or [])
+    }
+    rows = []
+    for edge in edges:
+        citing, cited = edge["s"], edge["t"]
+        status, status_label = citation_edge_status(edge)
+        rows.append(
+            f'<li data-citing="{e(citing)}" data-cited="{e(cited)}" '
+            f'data-evidence-status="{status}">'
+            f'<span class="edge-pair"><a href="../{e(citing)}/">{e(labels.get(citing, citing))}</a>'
+            f'<span class="edge-direction" aria-label="cites">&rarr;</span>'
+            f'<a href="../{e(cited)}/">{e(labels.get(cited, cited))}</a></span>'
+            f'<span class="edge-status {status}">{status_label}</span></li>'
+        )
+    contents = (
+        f'<ul class="edge-evidence-list">{"".join(rows)}</ul>'
+        if rows else '<p class="faint">No citation edges in this exported neighbourhood.</p>'
+    )
+    return f"""<section class="edge-evidence" aria-labelledby="citation-edge-evidence">
+<h2 id="citation-edge-evidence">Citation edge evidence</h2>
+<p class="meta">Each row is directed from the citing work to the cited work. Source status remains readable without the interactive graph.</p>
+{contents}
+</section>"""
+
+
 def bar_chart(pairs: list[tuple[int, int]], *, label: str, width: int = 980, height: int = 200) -> str:
     """Works per publication year. One series, so no legend -- the heading names it.
 
@@ -713,6 +756,7 @@ def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
     <span><i style="background:var(--citer)"></i>works citing it</span>
     <span class="faint">node size = global citations &middot; hover for the full title</span>
   </div>
+  {citation_edge_evidence(w["graph"])}
   {neighbour_list(w, "reference", "What this paper cites, inside the corpus")}
   {neighbour_list(w, "citer", "What cites it, inside the corpus")}
 </div>
@@ -1177,6 +1221,16 @@ def render_methodology(corpus: dict) -> str:
 <p class="meta">Nothing here is scraped from a publisher's website. Every record comes
    from an open API or bulk dump under a licence that permits reuse, and each page
    names the stored payload it was rendered from.</p>
+</div>
+
+<div class="panel">
+<h2>How citation edges are corroborated</h2>
+<p>We call a citation edge <b>corroborated</b> only when OpenAlex and
+   OpenCitations independently assert the same directed DOI-resolved edge: the
+   same citing work points to the same cited work.</p>
+<p>An edge asserted by only one index remains visible. Its work-page evidence
+   identifies the single index, and an OpenCitations-only edge is explicitly
+   marked unconfirmed by OpenAlex.</p>
 </div>
 
 <div class="panel">
