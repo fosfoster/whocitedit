@@ -17,6 +17,7 @@ import json
 import sys
 from pathlib import Path
 
+from corpus_contract import normalize
 from openalex import Client, short_id
 from opencitations import Client as CociClient
 from opencitations import normalize_doi
@@ -44,23 +45,32 @@ AUTHOR_FIELDS = ",".join(
 )
 
 
-def harvest_works(client: Client) -> int:
+def harvest_works(client: Client, corpus: dict | None = None) -> int:
+    """Harvest each configured field with its own OpenAlex selection rules."""
     seen = 0
-    target = CORPUS["max_works"]
-    for fetched in client.paginate(
-        "works",
-        {
-            "filter": CORPUS["seed_filter"],
-            "sort": CORPUS["seed_sort"],
-            "select": WORK_FIELDS,
-        },
-        max_records=target,
-    ):
-        got = len(fetched.payload.get("results") or [])
-        seen += got
-        print(f"  works +{got} = {seen}/{target}  ({client.spent} credits)", flush=True)
-        if seen >= target:
-            break
+    for field_key, definition in normalize(CORPUS if corpus is None else corpus).items():
+        field_seen = 0
+        target = definition["max_works"]
+        for fetched in client.paginate(
+            "works",
+            {
+                "filter": definition["seed_filter"],
+                "sort": definition["seed_sort"],
+                "select": WORK_FIELDS,
+            },
+            max_records=target,
+            field_key=field_key,
+        ):
+            got = len(fetched.payload.get("results") or [])
+            field_seen += got
+            seen += got
+            print(
+                f"  {field_key} works +{got} = {field_seen}/{target} "
+                f"({client.spent} credits)",
+                flush=True,
+            )
+            if field_seen >= target:
+                break
     return seen
 
 
