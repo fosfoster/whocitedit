@@ -174,14 +174,13 @@ models:
   builder: claude-cli
   composer: claude-cli
 
-# Opens closed, as a new board should. `autonomy: pr-only` means work lands as a
-# pull request for a human to merge; the surveyor is off until this board has a
-# track record, so goals arrive from an operator rather than from the board
-# proposing its own.
+# `autonomy: pr-only` means work lands as a pull request for a human to merge.
+# The surveyor was off until this board had a track record; turned on
+# 2026-09-14 as part of enabling it fleet-wide on every unpaused project.
 autonomy: pr-only
 
 surveyor:
-  autonomy: off
+  autonomy: auto
 
 concurrency: 1
 
