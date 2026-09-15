@@ -752,6 +752,22 @@ def main() -> int:
         row["key"]: json.loads(row["definition"])
         for row in conn.execute("SELECT key, definition FROM corpus_field ORDER BY key")
     }
+    field_index = []
+    for row in conn.execute(
+        "SELECT cf.key, cf.definition, COUNT(wcf.work_id) AS works "
+        "FROM corpus_field cf LEFT JOIN work_corpus_field wcf ON wcf.field_key = cf.key "
+        "GROUP BY cf.key, cf.definition ORDER BY cf.key"
+    ):
+        field_definition = json.loads(row["definition"])
+        field_index.append(
+            {
+                "key": row["key"],
+                "name": field_definition["name"],
+                "description": field_definition.get("description"),
+                "works": row["works"],
+            }
+        )
+    total_bytes += _write(OUT / "fields-index.json", field_index)
     bands_count = {b: sum(1 for a in author_index if a["band"] == b) for b in ("high", "medium", "low")}
     withheld = conn.execute(
         "SELECT abstract_reason, COUNT(*) c FROM work GROUP BY abstract_reason"
