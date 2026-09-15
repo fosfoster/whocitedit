@@ -163,7 +163,7 @@ class Client:
 
     # -- storage ---------------------------------------------------------
 
-    def _store(self, url: str, payload: dict) -> Fetched:
+    def _store(self, url: str, payload: dict, field_key: str | None = None) -> Fetched:
         body = _canonical(payload)
         sha = hashlib.sha256(body).hexdigest()
         path = self.raw_dir / sha[:2] / f"{sha}.json"
@@ -180,6 +180,8 @@ class Client:
         except ValueError:
             rel = str(path)
         record = {"url": url, "sha256": sha, "fetched_at": fetched_at, "path": rel}
+        if field_key is not None:
+            record["field_key"] = field_key
         MANIFEST.parent.mkdir(parents=True, exist_ok=True)
         with MANIFEST.open("a") as fh:
             fh.write(json.dumps(record, sort_keys=True) + "\n")
@@ -193,19 +195,30 @@ class Client:
             query["mailto"] = self.mailto
         return f"{BASE}/{path.lstrip('/')}?{urllib.parse.urlencode(query)}"
 
-    def singleton(self, path: str, params: dict | None = None) -> Fetched:
+    def singleton(
+        self, path: str, params: dict | None = None, *, field_key: str | None = None
+    ) -> Fetched:
         self._charge(CREDITS_SINGLETON)
         url = self._url(path, params)
         self._throttle()
-        return self._store(url, self._opener(url))
+        return self._store(url, self._opener(url), field_key)
 
-    def page(self, path: str, params: dict | None = None) -> Fetched:
+    def page(
+        self, path: str, params: dict | None = None, *, field_key: str | None = None
+    ) -> Fetched:
         self._charge(CREDITS_LIST)
         url = self._url(path, params)
         self._throttle()
-        return self._store(url, self._opener(url))
+        return self._store(url, self._opener(url), field_key)
 
-    def paginate(self, path: str, params: dict | None = None, max_records: int | None = None):
+    def paginate(
+        self,
+        path: str,
+        params: dict | None = None,
+        max_records: int | None = None,
+        *,
+        field_key: str | None = None,
+    ):
         """Cursor-paginate a list endpoint, yielding one `Fetched` per page.
 
         Cursor paging rather than `page=`: OpenAlex caps offset paging at 10,000
@@ -214,11 +227,19 @@ class Client:
         """
         query = dict(params or {})
         query.setdefault("per-page", PER_PAGE)
+        page_size = int(query["per-page"])
         cursor = "*"
         seen = 0
         while cursor:
+            if max_records is not None:
+                if seen >= max_records:
+                    return
+                # The final page may be smaller than the normal 200-record
+                # page, so the stored raw response cannot contain records
+                # outside this field's declared bound.
+                query["per-page"] = min(page_size, max_records - seen)
             query["cursor"] = cursor
-            fetched = self.page(path, query)
+            fetched = self.page(path, query, field_key=field_key)
             yield fetched
             results = fetched.payload.get("results") or []
             seen += len(results)

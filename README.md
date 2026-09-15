@@ -71,6 +71,33 @@ python3 derive.py && python3 export_json.py && python3 render.py
 the sort and the bound. Changing it changes the corpus, which is why it is not
 a builder-editable file.
 
+Corpus definitions have two compatible contract shapes. The current legacy
+shape is one top-level field definition (with `name`, `seed_filter`,
+`seed_sort`, `max_works`, and its other definition properties); it is
+normalized under a deterministic key derived from `name` — for example,
+`Artificial Intelligence` becomes `artificial-intelligence`. A multi-field
+corpus uses explicit stable keys instead:
+
+```json
+{
+  "fields": {
+    "artificial-intelligence": {
+      "name": "Artificial Intelligence",
+      "seed_filter": "primary_topic.subfield.id:subfields/1702",
+      "seed_sort": "cited_by_count:desc",
+      "max_works": 3000
+    }
+  }
+}
+```
+
+Harvesting paginates each normalized field independently with that field's
+filter, sort, and bound. Each OpenAlex work-page observation in
+`harvest/manifest.jsonl` carries its `field_key`; the content-addressed raw
+payload remains unchanged by that provenance tag. Thus one raw payload (and
+one work in it) may be observed in more than one field while retaining a
+separate manifest line for each observation.
+
 ## The two things this site does that others do not
 
 **It shows how confident it is that an author record is one person.** Author
