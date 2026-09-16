@@ -772,6 +772,22 @@ def main() -> int:
     withheld = conn.execute(
         "SELECT abstract_reason, COUNT(*) c FROM work GROUP BY abstract_reason"
     ).fetchall()
+    citation_sources = {
+        "openalex": {
+            "id": "openalex",
+            "name": "OpenAlex",
+            "url": "https://openalex.org",
+            "license": "CC0",
+            "role": "works, authors, institutions, topics and citation edges",
+        },
+        "opencitations": {
+            "id": "opencitations",
+            "name": "OpenCitations COCI",
+            "url": "https://opencitations.net/index/coci/",
+            "license": "CC0",
+            "role": "citation edges",
+        },
+    }
     _write(
         OUT / "corpus.json",
         {
@@ -801,19 +817,13 @@ def main() -> int:
             "identity_notes": identity.NOTE_TEMPLATES,
             "identity_bands": identity.BAND_SENTENCES,
             "abstracts": {r["abstract_reason"]: r["c"] for r in withheld},
+            # The mapping keys are the stable identifiers carried by graph-edge
+            # `sources`. Keep the legacy list until every committed reader has
+            # moved to the keyed declaration contract.
+            "citation_sources": citation_sources,
             "sources": [
-                {
-                    "name": "OpenAlex",
-                    "url": "https://openalex.org",
-                    "license": "CC0",
-                    "role": "works, authors, institutions, topics and citation edges",
-                },
-                {
-                    "name": "OpenCitations COCI",
-                    "url": "https://opencitations.net/index/coci/",
-                    "license": "CC0",
-                    "role": "citation edges",
-                },
+                {key: value for key, value in source.items() if key != "id"}
+                for source in citation_sources.values()
             ],
         },
     )

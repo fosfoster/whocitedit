@@ -563,6 +563,17 @@ def provenance_html(raw, payloads: dict) -> str:
     return '<ul class="evidence provenance-list">' + "".join(rows) + "</ul>"
 
 
+def author_provenance(a: dict, work_raw: dict[str, object]) -> tuple[str | list[str], bool]:
+    """Resolve an author's direct payload, or the payloads of its exported works."""
+    if a.get("raw"):
+        return a["raw"], False
+    hashes = set()
+    for linked_work in a.get("works", []):
+        raw = work_raw.get(linked_work.get("id"))
+        hashes.update(raw if isinstance(raw, list) else [raw] if raw else [])
+    return sorted(hashes), True
+
+
 def entity_link(kind: str, item: dict, available: set[str], *, prefix: str = "../../") -> str:
     """Link an entity only when its detail page exists in this data release."""
     ident = item.get("id")
@@ -759,7 +770,6 @@ def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
         f'\u2014 every node carries its full title on hover.'
     )
 
-    prov = payloads.get(w.get("raw") or "", {})
     topic_ids = topic_ids or set()
     rows = "".join(
         f'<tr><td>{entity_link("t", t, topic_ids)}</td>'
@@ -812,9 +822,8 @@ def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
   </div>
   <div class="panel">
     <h2>Provenance</h2>
-    <p class="meta">Everything above was read from one stored OpenAlex payload, fetched
-       {e(prov.get("fetched_at", "unknown"))}.</p>
-    <p class="mono faint">sha256 {e((w.get("raw") or "")[:16])}&hellip;</p>
+    <p class="meta">This work record resolves to the stored source payload below.</p>
+    {provenance_html(w.get("raw"), payloads)}
   </div>
 </div>
 </div>
@@ -833,7 +842,8 @@ def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
 
 
 def render_author(a: dict, notes: dict, bands: dict, payloads: dict,
-                  institution_ids: set[str] | None = None) -> str:
+                  institution_ids: set[str] | None = None,
+                  work_raw: dict[str, object] | None = None) -> str:
     band = a["confidence"]["band"]
     works_rows = "".join(
         f'<tr><td><a href="../../w/{e(w["id"])}/">{e(w["title"])}</a></td>'
@@ -870,6 +880,13 @@ def render_author(a: dict, notes: dict, bands: dict, payloads: dict,
         f'collaboration weight rather than by shared-paper count. Dashed lines are '
         f'collaborations between the collaborators. See '
         f'<a href="../../methodology/">how the weight is computed</a>.'
+    )
+    author_raw, used_work_fallback = author_provenance(a, work_raw or {})
+    provenance_note = (
+        "No direct source payload hash was recorded for this author. Provenance "
+        "therefore resolves through the stored payloads for linked exported works."
+        if used_work_fallback else
+        "This author record resolves to the stored source payload below."
     )
 
     body = f"""
@@ -910,6 +927,11 @@ def render_author(a: dict, notes: dict, bands: dict, payloads: dict,
     <p class="meta">h-index {num(a["in_corpus"]["hindex"])} over the works held here,
        which is a number about this corpus and not about a career.</p>
     <p class="meta"><a href="{e(a["openalex_url"])}">OpenAlex record</a></p>
+  </div>
+  <div class="panel">
+    <h2>Provenance</h2>
+    <p class="meta">{provenance_note}</p>
+    {provenance_html(author_raw, payloads)}
   </div>
 </div>
 </div>
@@ -1306,10 +1328,13 @@ def render_cohort(kind: str, band: str, index_rows: list) -> str:
 
 def render_methodology(corpus: dict) -> str:
     abstracts = corpus["abstracts"]
+    declared_sources = corpus.get("citation_sources", corpus["sources"])
+    if isinstance(declared_sources, dict):
+        declared_sources = declared_sources.values()
     src_rows = "".join(
         f'<tr><td><a href="{e(s["url"])}">{e(s["name"])}</a></td><td>{e(s["license"])}</td>'
         f'<td>{e(s["role"])}</td></tr>'
-        for s in corpus["sources"]
+        for s in declared_sources
     )
     body = f"""
 <h1>Methodology</h1>
@@ -1496,9 +1521,11 @@ def main() -> int:
             topic_payloads.update(json.loads(shard.read_text()))
     institution_ids = set(institution_payloads)
     topic_ids = set(topic_payloads)
+    work_raw = {}
 
     for shard in sorted((DATA / "works").glob("*.json")):
         for wid, w in json.loads(shard.read_text()).items():
+            work_raw[wid] = w.get("raw")
             total += write(
                 f"w/{wid}/index.html",
                 render_work(w, author_names, titles, payloads, quality_notes, topic_ids),
@@ -1511,7 +1538,7 @@ def main() -> int:
         for aid, a in json.loads(shard.read_text()).items():
             total += write(
                 f"a/{aid}/index.html",
-                render_author(a, notes, bands, payloads, institution_ids),
+                render_author(a, notes, bands, payloads, institution_ids, work_raw),
             )
             n += 1
 
