@@ -16,6 +16,7 @@ the pages say so.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -72,6 +73,10 @@ def _is_author(obj: dict) -> bool:
     return "display_name" in obj and "works_count" in obj and "authorships" not in obj
 
 
+def _is_crossref_work_envelope(payload: dict) -> bool:
+    return payload.get("message-type") == "work" and isinstance(payload.get("message"), dict)
+
+
 def _load_fields(conn) -> dict[str, dict]:
     definitions = normalize(json.loads(CORPUS.read_text()))
     if not definitions:
@@ -121,6 +126,7 @@ def load(conn) -> dict:
     stats = {"payloads": 0, "works": 0, "authors": 0, "authorships": 0}
     references: dict[str, list[str]] = {}
     coci_assertions: list[tuple[str, str]] = []
+    crossref_envelopes: list[tuple[str, dict]] = []
     definitions = _load_fields(conn)
 
     for rec, observations, payload in _payloads():
@@ -141,6 +147,13 @@ def load(conn) -> dict:
                     if isinstance(obj, dict)
                 )
             continue
+        # Crossref's stored envelope wraps a single work in "message", rather
+        # than OpenAlex's "results" list. Collect it now but reconcile by DOI
+        # only after every OpenAlex work is inserted below, so the match does
+        # not depend on the (hash-ordered) order raw files are visited in.
+        if _is_crossref_work_envelope(payload):
+            crossref_envelopes.append((rec["sha256"], payload["message"]))
+            continue
         for obj in payload.get("results") or []:
             if _is_work(obj):
                 wid = _insert_work(conn, obj, rec["sha256"])
@@ -158,6 +171,7 @@ def load(conn) -> dict:
 
     stats["authorships"] = conn.execute("SELECT COUNT(*) c FROM authorship").fetchone()["c"]
     stats["citations"] = _insert_citations(conn, references, coci_assertions)
+    stats["crossref_assertions"] = _insert_crossref_assertions(conn, crossref_envelopes)
     return stats
 
 
@@ -387,6 +401,95 @@ def _insert_citations(conn, references: dict[str, list[str]],
     return conn.execute("SELECT COUNT(*) c FROM citation").fetchone()["c"]
 
 
+def _first(values) -> str | None:
+    return values[0] if isinstance(values, list) and values else None
+
+
+def _insert_crossref_assertions(conn, envelopes: list[tuple[str, dict]]) -> int:
+    """Join stored Crossref work envelopes to the corpus by normalized DOI.
+
+    Runs after every OpenAlex work is in place, so a Crossref payload whose
+    DOI is not (yet, or ever) in the corpus is simply dropped rather than
+    stored dangling.
+    """
+    doi_to_work: dict[str, str] = {}
+    for row in conn.execute("SELECT id, doi FROM work"):
+        doi = _normalized_doi(row["doi"])
+        if doi:
+            doi_to_work.setdefault(doi, row["id"])
+
+    count = 0
+    for raw_sha, message in envelopes:
+        wid = doi_to_work.get(_normalized_doi(message.get("DOI")))
+        if not wid:
+            continue
+        conn.execute(
+            "INSERT INTO crossref_work_assertion(work_id, raw_sha, venue, venue_short, work_type) "
+            "VALUES(?,?,?,?,?) ON CONFLICT(work_id, raw_sha) DO UPDATE SET "
+            "venue=excluded.venue, venue_short=excluded.venue_short, work_type=excluded.work_type",
+            (
+                wid,
+                raw_sha,
+                _first(message.get("container-title")),
+                _first(message.get("short-container-title")),
+                message.get("type"),
+            ),
+        )
+        count += 1
+    return count
+
+
+def _normalize_venue(value: str) -> str:
+    """Casefold, drop a leading "the" article, then strip all punctuation.
+
+    The leading article is stripped as a whole word before punctuation
+    removal, so "The Journal" and "Journal" compare equal without also
+    mangling a title that merely starts with those letters, like "Theory".
+    """
+    value = re.sub(r"^the\b\s*", "", value.strip().casefold())
+    return re.sub(r"[^a-z0-9]", "", value)
+
+
+def venue_comparison_status(
+    openalex_venue: str | None, crossref_venue: str | None, crossref_short: str | None
+) -> str:
+    """Compare OpenAlex's source name against Crossref's venue assertion.
+
+    Agreement counts against either the long or short Crossref container
+    title, so a journal abbreviation is not reported as a contradiction.
+    """
+    if not openalex_venue or not (crossref_venue or crossref_short):
+        return "unavailable"
+    normalized = _normalize_venue(openalex_venue)
+    candidates = {_normalize_venue(v) for v in (crossref_venue, crossref_short) if v}
+    return "agree" if normalized in candidates else "disagree"
+
+
+# Crossref and OpenAlex use different, overlapping type vocabularies. Only
+# pairs listed here are comparable; an unmapped Crossref type is not evidence
+# of a defect, so it is `incomparable`, never `disagree`.
+CROSSREF_TO_OPENALEX_TYPE = {
+    "journal-article": "article",
+    "proceedings-article": "article",
+    "posted-content": "preprint",
+    "book-chapter": "book-chapter",
+    "report": "report",
+    "dataset": "dataset",
+    "book": "book",
+    "monograph": "book",
+    "peer-review": "peer-review",
+}
+
+
+def work_type_comparison_status(openalex_type: str | None, crossref_type: str | None) -> str:
+    if not openalex_type or not crossref_type:
+        return "unavailable"
+    expected = CROSSREF_TO_OPENALEX_TYPE.get(crossref_type)
+    if expected is None:
+        return "incomparable"
+    return "agree" if expected == openalex_type else "disagree"
+
+
 def score_quality(conn) -> dict[str, int]:
     """Flag work records that contradict themselves. Nothing is deleted."""
     bands = {quality.COMPLETE: 0, quality.PARTIAL: 0, quality.SUSPECT: 0}
@@ -469,7 +572,8 @@ def main() -> int:
     stats = load(conn)
     print(f"   {stats['payloads']} payloads -> {stats['works']} works, "
           f"{stats['authors']} author records, {stats['authorships']} authorships, "
-          f"{stats['citations']} in-corpus citations")
+          f"{stats['citations']} in-corpus citations, "
+          f"{stats['crossref_assertions']} crossref work assertions")
 
     print("== co-authorship")
     edges = graph.build_coauthorship(conn, now_year)
