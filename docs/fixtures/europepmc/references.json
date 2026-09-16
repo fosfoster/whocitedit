@@ -1,0 +1,28 @@
+{
+  "version": "6.9",
+  "hitCount": 2,
+  "request": {
+    "id": "38000001",
+    "source": "MED"
+  },
+  "referenceList": {
+    "reference": [
+      {
+        "id": "38000002",
+        "source": "MED",
+        "publicationType": "research-article",
+        "authorString": "Example C.",
+        "title": "A fixture Europe PMC reference one",
+        "doi": "10.5555/reference-one"
+      },
+      {
+        "id": "38000003",
+        "source": "MED",
+        "publicationType": "research-article",
+        "authorString": "Example D.",
+        "title": "A fixture Europe PMC reference two",
+        "doi": "10.5555/reference-two"
+      }
+    ]
+  }
+}
