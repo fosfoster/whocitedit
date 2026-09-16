@@ -128,7 +128,7 @@ def check_deploy(
     for prefix in DETAIL_PREFIXES:
         route = samples[prefix]
         if route is None:
-            rows.append((f"Title /{prefix}/ detail", "SKIP", "no local sitemap sample"))
+            rows.append((f"HTML SHA-256 /{prefix}/ detail", "SKIP", "no local sitemap sample"))
         else:
             requested.append((route, route))
     requested.append(("/assets/islands.js", "/assets/islands.js"))
@@ -184,7 +184,7 @@ def check_deploy(
     for route in [sample for sample in samples.values() if sample]:
         response = remote.get(route)
         page = local_page(site, route)
-        name = f"Title {route}"
+        name = f"HTML SHA-256 {route}"
         if response is None or not 200 <= response.status < 300:
             rows.append((name, "FAIL", "remote page unavailable"))
             failures = True
@@ -192,10 +192,9 @@ def check_deploy(
             rows.append((name, "FAIL", f"missing local {page.relative_to(site)}"))
             failures = True
         else:
-            local_title = title(page.read_bytes())
-            remote_title = title(response.body)
-            status = "PASS" if local_title == remote_title and local_title is not None else "FAIL"
-            rows.append((name, status, f"local {local_title!r}; remote {remote_title!r}"))
+            matches, local_hash, remote_hash = sha256_comparison(page.read_bytes(), response.body)
+            status = "PASS" if matches else "FAIL"
+            rows.append((name, status, f"local {local_hash}; remote {remote_hash}"))
             failures |= status == "FAIL"
 
     remote_bundle = remote.get("/assets/islands.js")
