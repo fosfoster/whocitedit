@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fetch OpenAlex corpus metadata and COCI references into `harvest/raw/`.
+"""Fetch OpenAlex corpus metadata, COCI references, and Crossref work records.
 
 THIS IS NOT A BUILDER STEP. It needs the network, it spends a metered credit
 allowance, and it writes files that are gitignored. `tools/check.sh` never calls
@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 
 from corpus_contract import normalize
+from crossref import Client as CrossrefClient
+from crossref import normalize_doi as normalize_crossref_doi
 from openalex import Client, short_id
 from opencitations import Client as CociClient
 from opencitations import normalize_doi
@@ -92,7 +94,7 @@ def author_ids_in_raw() -> list[str]:
     return sorted(ids)
 
 
-def dois_in_raw() -> list[str]:
+def dois_in_raw(normalizer=normalize_doi) -> list[str]:
     """Find each DOI in stored OpenAlex work pages, once."""
     dois: set[str] = set()
     for path in sorted((ROOT / "harvest" / "raw").rglob("*.json")):
@@ -105,7 +107,7 @@ def dois_in_raw() -> list[str]:
             doi = work.get("doi")
             if doi:
                 try:
-                    dois.add(normalize_doi(doi))
+                    dois.add(normalizer(doi))
                 except ValueError:
                     print(f"! ignored invalid OpenAlex DOI: {doi!r}", file=sys.stderr)
     return sorted(dois)
@@ -140,6 +142,16 @@ def harvest_citations(client: CociClient) -> int:
     return len(dois)
 
 
+def harvest_crossref(client: CrossrefClient) -> int:
+    """Store Crossref work records for each stored OpenAlex work DOI once."""
+    dois = dois_in_raw(normalize_crossref_doi)
+    print(f"  {len(dois)} DOI-bearing works referenced by the stored OpenAlex pages")
+    for done, doi in enumerate(dois, start=1):
+        client.work(doi)
+        print(f"  crossref {done}/{len(dois)}  ({client.spent} requests)", flush=True)
+    return len(dois)
+
+
 def main(argv: list[str]) -> int:
     what = argv[1] if len(argv) > 1 else "all"
     if what == "citations":
@@ -147,6 +159,12 @@ def main(argv: list[str]) -> int:
         print("== citations")
         harvest_citations(coci)
         print(f"== done: {coci.spent} requests spent, {coci.remaining} left today")
+        return 0
+    if what == "crossref":
+        crossref = CrossrefClient()
+        print("== crossref")
+        harvest_crossref(crossref)
+        print(f"== done: {crossref.spent} requests spent, {crossref.remaining} left today")
         return 0
 
     client = Client()
