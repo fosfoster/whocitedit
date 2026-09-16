@@ -776,6 +776,17 @@ def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
         f'<td class="faint">{e(t["field"] or "")}</td></tr>'
         for t in w["topics"]
     )
+    field_names = {field["key"]: field["name"] for field in NAV_FIELDS}
+    field_links = "".join(
+        f'<li><a href="../../fields/{e(key)}/">{e(field_names[key])}</a></li>'
+        for key in w.get("fields", [])
+        if key in field_names
+    )
+    fields = (
+        f'<section class="field-memberships" aria-labelledby="field-memberships-heading">'
+        f'<h2 id="field-memberships-heading">Fields</h2><ul>{field_links}</ul></section>'
+        if field_links else ""
+    )
     links = [
         '<a href="citation.bib" download>Download BibTeX</a>',
         '<a href="citation.ris" download>Download RIS</a>',
@@ -814,6 +825,7 @@ def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
     <h2>Topics</h2>
     <table>{rows or '<tr><td class="faint">None recorded.</td></tr>'}</table>
   </div>
+  {fields}
   <div class="panel">
     <h2>Is this record sound?</h2>
     <p><span class="badge {q["band"]}">{q["band"]}</span></p>
