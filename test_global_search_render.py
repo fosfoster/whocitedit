@@ -20,8 +20,14 @@ def check(cond, msg):
 
 
 def expected_records(data: Path, collections) -> list[dict]:
+    state_fields = {"work": "quality", "author": "band"}
     return [
-        {"kind": kind, "id": row["id"], "label": row[label]}
+        {
+            "kind": kind,
+            "id": row["id"],
+            "label": row[label],
+            **({"state": row[state_fields[kind]]} if kind in state_fields else {}),
+        }
         for kind, index, label in collections
         for row in json.loads((data / index).read_text())
     ]
@@ -54,8 +60,32 @@ def main() -> int:
         expected = expected_records(render.DATA, collections)
         bad += check(records == expected,
                      "search index does not project every collection in fixed kind order")
-        bad += check(all(set(record) == {"kind", "id", "label"} for record in records),
-                     "search records contain fields beyond kind, id, and label")
+        expected_states = {
+            **{
+                ("work", row["id"]): row["quality"]
+                for row in json.loads((render.DATA / "works-index.json").read_text())
+            },
+            **{
+                ("author", row["id"]): row["band"]
+                for row in json.loads((render.DATA / "authors-index.json").read_text())
+            },
+        }
+        actual_states = {
+            (record["kind"], record["id"]): record["state"]
+            for record in records if record["kind"] in ("work", "author") and "state" in record
+        }
+        bad += check(
+            actual_states == expected_states,
+            "work quality and author confidence states do not match their sources")
+        bad += check(
+            all("state" not in record for record in records
+                if record["kind"] in ("institution", "topic")),
+            "institution and topic search records carry state")
+        bad += check(
+            all(set(record) == ({"kind", "id", "label", "state"}
+                                if record["kind"] in ("work", "author")
+                                else {"kind", "id", "label"}) for record in records),
+            "search records do not have the expected compact schema")
         bad += check(len({(record["kind"], record["id"]) for record in records}) == len(records),
                      "search index contains duplicate entity records")
 
