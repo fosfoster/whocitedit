@@ -77,6 +77,14 @@ def _is_crossref_work_envelope(payload: dict) -> bool:
     return payload.get("message-type") == "work" and isinstance(payload.get("message"), dict)
 
 
+def _is_europepmc_search(payload: dict) -> bool:
+    return "resultList" in payload
+
+
+def _is_europepmc_references(payload: dict) -> bool:
+    return "referenceList" in payload
+
+
 def _load_fields(conn) -> dict[str, dict]:
     definitions = normalize(json.loads(CORPUS.read_text()))
     if not definitions:
@@ -127,6 +135,8 @@ def load(conn) -> dict:
     references: dict[str, list[str]] = {}
     coci_assertions: list[tuple[str, str]] = []
     crossref_envelopes: list[tuple[str, dict]] = []
+    europepmc_search_dois: dict[tuple[str, str], str] = {}
+    europepmc_reference_assertions: list[tuple[tuple[str, str], str]] = []
     definitions = _load_fields(conn)
 
     for rec, observations, payload in _payloads():
@@ -154,6 +164,26 @@ def load(conn) -> dict:
         if _is_crossref_work_envelope(payload):
             crossref_envelopes.append((rec["sha256"], payload["message"]))
             continue
+        # Europe PMC's DOI search echoes the (source, id) pair its references
+        # endpoint uses to name the citing article, but never a citing DOI
+        # directly. Index every search result's (source, id) -> doi here, and
+        # resolve the references payload's echoed key against it below, after
+        # every search payload has been visited.
+        if _is_europepmc_search(payload):
+            for result in (payload.get("resultList") or {}).get("result") or []:
+                if not isinstance(result, dict):
+                    continue
+                source, ext_id, doi = result.get("source"), result.get("id"), result.get("doi")
+                if source and ext_id and doi:
+                    europepmc_search_dois[(source, ext_id)] = doi
+            continue
+        if _is_europepmc_references(payload):
+            request = payload.get("request") or {}
+            citing_key = (request.get("source"), request.get("id"))
+            for ref in (payload.get("referenceList") or {}).get("reference") or []:
+                if isinstance(ref, dict) and ref.get("doi"):
+                    europepmc_reference_assertions.append((citing_key, ref["doi"]))
+            continue
         for obj in payload.get("results") or []:
             if _is_work(obj):
                 wid = _insert_work(conn, obj, rec["sha256"])
@@ -170,7 +200,10 @@ def load(conn) -> dict:
                 stats["authors"] += 1
 
     stats["authorships"] = conn.execute("SELECT COUNT(*) c FROM authorship").fetchone()["c"]
-    stats["citations"] = _insert_citations(conn, references, coci_assertions)
+    stats["citations"] = _insert_citations(
+        conn, references, coci_assertions,
+        europepmc_search_dois, europepmc_reference_assertions,
+    )
     stats["crossref_assertions"] = _insert_crossref_assertions(conn, crossref_envelopes)
     return stats
 
@@ -369,7 +402,9 @@ def _normalized_doi(value: str | None) -> str | None:
 
 
 def _insert_citations(conn, references: dict[str, list[str]],
-                      coci_assertions: list[tuple[str, str]]) -> int:
+                      coci_assertions: list[tuple[str, str]],
+                      europepmc_search_dois: dict[tuple[str, str], str],
+                      europepmc_reference_assertions: list[tuple[tuple[str, str], str]]) -> int:
     in_corpus = {r["id"] for r in conn.execute("SELECT id FROM work")}
     assertions: dict[tuple[str, str], set[str]] = {}
 
@@ -388,6 +423,17 @@ def _insert_citations(conn, references: dict[str, list[str]],
         cited = doi_to_work.get(_normalized_doi(cited_doi))
         if citing and cited and citing != cited:
             assertions.setdefault((citing, cited), set()).add("opencitations")
+
+    # A Europe PMC references payload names its citing article by (source, id),
+    # never by DOI. Resolve that key against the stored search payload's echo
+    # of the same pair before it can be joined to the in-corpus DOI index; an
+    # unresolved key is dropped silently, exactly as an unknown COCI DOI is.
+    for citing_key, cited_doi in europepmc_reference_assertions:
+        citing_doi = europepmc_search_dois.get(citing_key)
+        citing = doi_to_work.get(_normalized_doi(citing_doi))
+        cited = doi_to_work.get(_normalized_doi(cited_doi))
+        if citing and cited and citing != cited:
+            assertions.setdefault((citing, cited), set()).add("europepmc")
 
     rows = [
         (citing, cited, graph.encode_sources(list(sources)))
