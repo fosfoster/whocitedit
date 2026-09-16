@@ -21,8 +21,8 @@ def check(condition, message):
     return 0
 
 
-def html(page_title):
-    return f"<!doctype html><html><head><title>{page_title}</title></head><body></body></html>".encode()
+def html(page_title, body=""):
+    return f"<!doctype html><html><head><title>{page_title}</title></head><body>{body}</body></html>".encode()
 
 
 def sitemap(routes):
@@ -115,6 +115,31 @@ def test_shared_html_content_drift():
     return 1 if bad else 0
 
 
+def test_detail_html_content_drift():
+    bad = 0
+    with offline_fixture() as (site, pages, bundle, responses):
+        for route in ROUTES:
+            changed_body = dict(responses)
+            changed_body[route] = html(pages[route], f"stale detail content for {route}")
+            local_title = responses[route].split(b"</title>", 1)[0]
+            remote_title = changed_body[route].split(b"</title>", 1)[0]
+            bad += check(
+                local_title == remote_title and responses[route] != changed_body[route],
+                f"content-drift fixture for {route} did not preserve its title",
+            )
+            code, output, _ = run_case(site, bundle, changed_body)
+            row = f"HTML SHA-256 {route}"
+            content_row = next((line for line in output.splitlines() if line.startswith(row)), "")
+            local_hash = hashlib.sha256(responses[route]).hexdigest()
+            remote_hash = hashlib.sha256(changed_body[route]).hexdigest()
+            bad += check(
+                code == 1 and "FAIL" in content_row
+                and f"local {local_hash}; remote {remote_hash}" in content_row,
+                f"same-title content drift for {route} did not fail its HTML hash comparison",
+            )
+    return 1 if bad else 0
+
+
 def main():
     bad = 0
     with offline_fixture() as (site, pages, bundle, responses):
@@ -137,8 +162,13 @@ def main():
                 f"matching deployment did not report matching HTML hashes for {route}",
             )
         for route in ROUTES:
-            bad += check(f"Title {route}" in output,
-                         f"matching deployment did not compare title for {route}")
+            row = next((line for line in output.splitlines()
+                        if line.startswith(f"HTML SHA-256 {route}")), "")
+            content_hash = hashlib.sha256(responses[route]).hexdigest()
+            bad += check(
+                "PASS" in row and f"local {content_hash}; remote {content_hash}" in row,
+                f"matching deployment did not report matching HTML hashes for {route}",
+            )
 
         stale_sitemap = dict(responses)
         stale_sitemap["/sitemap.xml"] = sitemap(("/", "/methodology/") + ROUTES[:-1])
@@ -146,11 +176,11 @@ def main():
         bad += check(code == 1 and "Sitemap URL count" in output and "FAIL" in output,
                      "stale sitemap did not return 1 with a failing sitemap row")
 
-        wrong_title = dict(responses)
-        wrong_title["/a/A1/"] = html("Old author title")
-        code, output, _ = run_case(site, bundle, wrong_title)
-        bad += check(code == 1 and "Title /a/A1/" in output and "Old author title" in output,
-                     "title mismatch did not return 1 with the sampled title")
+        changed_author_html = dict(responses)
+        changed_author_html["/a/A1/"] = html("Old author title")
+        code, output, _ = run_case(site, bundle, changed_author_html)
+        bad += check(code == 1 and "HTML SHA-256 /a/A1/" in output and "FAIL" in output,
+                     "detail HTML mismatch did not return 1 with a hash row")
 
         stale_bundle = dict(responses)
         stale_bundle["/assets/islands.js"] = b"old fixture island bundle\n"
@@ -176,12 +206,13 @@ def main():
         missing_responses = fixture_responses(pages, bundle)
         missing_responses["/sitemap.xml"] = sitemap(missing_routes)
         code, output, calls = run_case(missing, bundle, missing_responses)
-        bad += check(code == 0 and "Title /i/ detail" in output and "SKIP" in output,
+        bad += check(code == 0 and "HTML SHA-256 /i/ detail" in output and "SKIP" in output,
                      "missing local detail class was not a non-failing SKIP")
         bad += check(BASE_URL + "/i/I1/" not in calls,
                      "checker fetched a detail route with no local sample")
 
     bad += test_shared_html_content_drift()
+    bad += test_detail_html_content_drift()
 
     print("test_check_deploy:", "FAILED" if bad else "ok")
     return 1 if bad else 0

@@ -57,7 +57,9 @@ python3 check_deploy.py https://whocitedit.com
 An exit 1 means deployed content has drifted from the expected release; an
 exit 2 means `https://whocitedit.com` could not be reached. CI only runs the
 checker's fixture-backed tests; its automated gate remains network-free and
-never contacts production.
+never contacts production. Deployment parity compares the exact deterministic
+HTML content for home, methodology, and one available sampled work, author,
+institution, and topic route, as well as the committed islands bundle.
 
 To refresh the corpus (network, operator only):
 
