@@ -4,7 +4,7 @@ A static, crawlable graph of open scholarship: one page per paper, author,
 institution, and topic, each carrying the relevant ranked lists and graphs as
 SVG solved at build time rather than simulated in the browser.
 
-    harvest.py   OpenAlex + COCI  ->  harvest/raw/    verbatim payloads, content-addressed
+    harvest.py   OpenAlex + COCI + Crossref  ->  harvest/raw/    verbatim payloads, content-addressed
     derive.py    raw       ->  whocitedit.db   normalized SQLite (gitignored)
     export_json  db        ->  web/data/       committed, sharded JSON
     render.py    web/data  ->  web/site/       static work, author, institution and topic pages
@@ -66,6 +66,8 @@ WHOCITEDIT_MAILTO=you@example.com python3 harvest.py all
 # A separate, bounded COCI pass stores outgoing DOI references in the same raw
 # provenance store. It is never run by the builder or CI.
 python3 harvest.py citations
+# A separate, bounded Crossref metadata pass. It is operator-only too.
+python3 harvest.py crossref
 python3 derive.py && python3 export_json.py && python3 render.py
 ```
 
@@ -149,3 +151,9 @@ operator-only DOI reference harvest. `opencitations.py` applies the same
 preflight budget, retry, throttling, content-addressed raw storage, and manifest
 provenance rules as the OpenAlex client; `python3 harvest.py citations` is the
 only entry point that invokes it.
+
+[Crossref](https://www.crossref.org/) supplies a separate operator-only work
+metadata harvest: `python3 harvest.py crossref`. `crossref.py` makes bounded,
+identified requests and retains each response under the same raw-store and
+manifest rules. Its downstream metadata contract is bibliographic metadata and
+provenance only: it excludes publisher scraping, abstracts, and full text.
