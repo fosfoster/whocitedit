@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Offline fixtures for the deployment parity checker."""
+import hashlib
 import io
 import shutil
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 import check_deploy
@@ -69,8 +71,8 @@ def run_case(site, bundle, responses):
     return code, output.getvalue(), transport.calls
 
 
-def main():
-    bad = 0
+@contextmanager
+def offline_fixture():
     tmp = Path(tempfile.mkdtemp())
     saved_urlopen = check_deploy.urlopen
 
@@ -82,6 +84,40 @@ def main():
         site = tmp / "site"
         pages, bundle = write_render(site)
         responses = fixture_responses(pages, bundle)
+        yield site, pages, bundle, responses
+    finally:
+        check_deploy.urlopen = saved_urlopen
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_shared_html_content_drift():
+    bad = 0
+    with offline_fixture() as (site, _, bundle, responses):
+        for route in ("/", "/methodology/"):
+            changed_body = dict(responses)
+            changed_body[route] = changed_body[route].replace(
+                b"<body></body>", b"<body>stale shared content</body>",
+            )
+            bad += check(
+                check_deploy.title(changed_body[route]) == check_deploy.title(responses[route]),
+                f"content-drift fixture for {route} changed its title",
+            )
+            code, output, _ = run_case(site, bundle, changed_body)
+            row = f"HTML SHA-256 {route}"
+            content_row = next((line for line in output.splitlines() if line.startswith(row)), "")
+            local_hash = hashlib.sha256(responses[route]).hexdigest()
+            remote_hash = hashlib.sha256(changed_body[route]).hexdigest()
+            bad += check(
+                code == 1 and "FAIL" in content_row
+                and f"local {local_hash}; remote {remote_hash}" in content_row,
+                f"same-title content drift for {route} did not fail its HTML hash comparison",
+            )
+    return 1 if bad else 0
+
+
+def main():
+    bad = 0
+    with offline_fixture() as (site, pages, bundle, responses):
         expected_urls = {BASE_URL + route for route in (
             "/robots.txt", "/sitemap.xml", "/", "/methodology/", *ROUTES, "/assets/islands.js",
         )}
@@ -92,7 +128,15 @@ def main():
                      "matching deployment did not request exactly the nine resources")
         bad += check("Deployment parity" in output and "PASS" in output,
                      "matching deployment did not print a PASS table")
-        for route in ("/", "/methodology/", *ROUTES):
+        for route in ("/", "/methodology/"):
+            row = next((line for line in output.splitlines()
+                        if line.startswith(f"HTML SHA-256 {route}")), "")
+            content_hash = hashlib.sha256(responses[route]).hexdigest()
+            bad += check(
+                "PASS" in row and f"local {content_hash}; remote {content_hash}" in row,
+                f"matching deployment did not report matching HTML hashes for {route}",
+            )
+        for route in ROUTES:
             bad += check(f"Title {route}" in output,
                          f"matching deployment did not compare title for {route}")
 
@@ -124,7 +168,7 @@ def main():
         bad += check(code == 2 and len(calls) == 9 and "Deployment parity" in output.getvalue(),
                      "unreachable host did not return 2 with a complete table")
 
-        missing = tmp / "missing-site"
+        missing = site.parent / "missing-site"
         shutil.copytree(site, missing)
         shutil.rmtree(missing / "i")
         missing_routes = ("/", "/methodology/", "/w/W1/", "/a/A1/", "/t/T1/")
@@ -136,9 +180,8 @@ def main():
                      "missing local detail class was not a non-failing SKIP")
         bad += check(BASE_URL + "/i/I1/" not in calls,
                      "checker fetched a detail route with no local sample")
-    finally:
-        check_deploy.urlopen = saved_urlopen
-        shutil.rmtree(tmp, ignore_errors=True)
+
+    bad += test_shared_html_content_drift()
 
     print("test_check_deploy:", "FAILED" if bad else "ok")
     return 1 if bad else 0

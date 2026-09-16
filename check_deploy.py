@@ -63,6 +63,13 @@ def title(html: bytes) -> str | None:
     return value or None
 
 
+def sha256_comparison(local: bytes, remote: bytes) -> tuple[bool, str, str]:
+    """Return whether byte content matches alongside hashes suitable for a report."""
+    local_hash = hashlib.sha256(local).hexdigest()
+    remote_hash = hashlib.sha256(remote).hexdigest()
+    return local_hash == remote_hash, local_hash, remote_hash
+
+
 def sitemap_routes(sitemap: bytes) -> list[str]:
     root = ElementTree.fromstring(sitemap)
     return [urlsplit(node.text or "").path for node in root.iter() if node.tag.endswith("loc")]
@@ -158,7 +165,23 @@ def check_deploy(
             rows.append(("Sitemap URL count", "FAIL", f"invalid remote sitemap: {error}"))
             failures = True
 
-    for route in ["/", "/methodology/"] + [sample for sample in samples.values() if sample]:
+    for route in ["/", "/methodology/"]:
+        response = remote.get(route)
+        page = local_page(site, route)
+        name = f"HTML SHA-256 {route}"
+        if response is None or not 200 <= response.status < 300:
+            rows.append((name, "FAIL", "remote page unavailable"))
+            failures = True
+        elif not page.exists():
+            rows.append((name, "FAIL", f"missing local {page.relative_to(site)}"))
+            failures = True
+        else:
+            matches, local_hash, remote_hash = sha256_comparison(page.read_bytes(), response.body)
+            status = "PASS" if matches else "FAIL"
+            rows.append((name, status, f"local {local_hash}; remote {remote_hash}"))
+            failures |= status == "FAIL"
+
+    for route in [sample for sample in samples.values() if sample]:
         response = remote.get(route)
         page = local_page(site, route)
         name = f"Title {route}"
@@ -183,9 +206,8 @@ def check_deploy(
         rows.append(("Bundle SHA-256", "FAIL", f"missing local {bundle}"))
         failures = True
     else:
-        local_hash = hashlib.sha256(bundle.read_bytes()).hexdigest()
-        remote_hash = hashlib.sha256(remote_bundle.body).hexdigest()
-        status = "PASS" if local_hash == remote_hash else "FAIL"
+        matches, local_hash, remote_hash = sha256_comparison(bundle.read_bytes(), remote_bundle.body)
+        status = "PASS" if matches else "FAIL"
         rows.append(("Bundle SHA-256", status, f"local {local_hash}; remote {remote_hash}"))
         failures |= status == "FAIL"
 
