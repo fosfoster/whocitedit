@@ -568,6 +568,26 @@ def provenance_html(raw, payloads: dict) -> str:
     return '<ul class="evidence provenance-list">' + "".join(rows) + "</ul>"
 
 
+def crossref_comparison_html(comparison: dict | None) -> str:
+    """Show how this work's OpenAlex venue/type compare against Crossref, if we have one."""
+    if not comparison:
+        return ""
+    rows = "".join(
+        f'<li><span class="badge {e(status)}">{e(status)}</span> <span>{e(label)}</span></li>'
+        for label, status in (
+            ("venue", comparison["venue_status"]),
+            ("work type", comparison["work_type_status"]),
+        )
+    )
+    return f"""
+  <div class="panel">
+    <h2>Crossref comparison</h2>
+    <p class="meta">How this work's OpenAlex venue and type compare against a Crossref assertion.</p>
+    <ul class="evidence">{rows}</ul>
+  </div>
+"""
+
+
 def author_provenance(a: dict, work_raw: dict[str, object]) -> tuple[str | list[str], bool]:
     """Resolve an author's direct payload, or the payloads of its exported works."""
     if a.get("raw"):
@@ -830,6 +850,7 @@ def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
     <p class="meta">This work record resolves to the stored source payload below.</p>
     {provenance_html(w.get("raw"), payloads)}
   </div>
+  {crossref_comparison_html(w.get("crossref_comparison"))}
 </div>
 </div>
 """

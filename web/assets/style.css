@@ -202,6 +202,12 @@ input[type=search]:focus-visible, a:focus-visible, button:focus-visible {
 .badge.partial { color: var(--medium); }
 .badge.suspect { color: var(--low); }
 
+/* Crossref venue/type comparison reuses the same palette: agree is good news,
+   disagree is a flag, and unavailable/incomparable are neutral non-findings. */
+.badge.agree { color: var(--high); }
+.badge.disagree { color: var(--low); }
+.badge.unavailable, .badge.incomparable { color: var(--ink-faint); }
+
 .cohort-summary {
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;
   margin: 0 0 18px;

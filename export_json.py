@@ -25,6 +25,7 @@ import shutil
 import sys
 from pathlib import Path
 
+import derive
 import graph
 import identity
 import quality
@@ -101,6 +102,25 @@ def _provenance(conn, sha: str | None) -> str | None:
     return sha or None
 
 
+def _crossref_comparison(conn, wid: str, source_name: str | None, work_type: str | None) -> dict | None:
+    """Compare this work's OpenAlex venue/type against its Crossref assertion, if any.
+
+    A work can carry more than one Crossref envelope; the earliest by raw_sha
+    is used so the comparison is deterministic across export runs.
+    """
+    row = conn.execute(
+        "SELECT venue, venue_short, work_type FROM crossref_work_assertion "
+        "WHERE work_id = ? ORDER BY raw_sha LIMIT 1",
+        (wid,),
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        "venue_status": derive.venue_comparison_status(source_name, row["venue"], row["venue_short"]),
+        "work_type_status": derive.work_type_comparison_status(work_type, row["work_type"]),
+    }
+
+
 def work_payload(conn, row, neighbourhood) -> dict:
     wid = row["id"]
     fields = [
@@ -166,6 +186,7 @@ def work_payload(conn, row, neighbourhood) -> dict:
         "graph": neighbourhood,
         "raw": _provenance(conn, row["raw_sha"]),
         "openalex_url": f"https://openalex.org/{wid}",
+        "crossref_comparison": _crossref_comparison(conn, wid, row["source_name"], row["type"]),
     }
 
 

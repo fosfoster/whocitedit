@@ -121,6 +121,12 @@ def build_corpus(tmp: Path) -> tuple[Path, set[str], str]:
         "UPDATE work SET quality = ? WHERE id = ?",
         ((band, wid) for wid, band in QUALITY_BANDS.items()),
     )
+    # Only W1 carries a Crossref assertion; W2/W3 must export with none.
+    conn.execute(
+        "INSERT INTO crossref_work_assertion(work_id, raw_sha, venue, venue_short, work_type) "
+        "VALUES('W1', ?, 'Journal', NULL, 'journal-article')",
+        (author_sha,),
+    )
     conn.commit()
     conn.close()
     return tmp / "corpus.db", shas, author_sha
@@ -182,6 +188,16 @@ def main() -> int:
         bad += check(all({topic["id"] for topic in works[wid]["topics"]} == {"T1"}
                          for wid in ("W1", "W2", "W3")),
                      "a fixture work lost its topic during derivation/export")
+        bad += check(
+            works["W1"].get("crossref_comparison") ==
+            {"venue_status": "agree", "work_type_status": "agree"},
+            "exported work with a Crossref assertion did not surface a venue/type comparison status",
+        )
+        bad += check(
+            works["W2"].get("crossref_comparison") is None and
+            works["W3"].get("crossref_comparison") is None,
+            "a work without a Crossref assertion exported a comparison status anyway",
+        )
         bad += check(all(conn.execute(
             "SELECT raw_sha FROM institution WHERE id = ?", (iid,)
         ).fetchone()["raw_sha"] for iid in institution_ids),
