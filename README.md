@@ -26,6 +26,8 @@ continue to use their own copied collection indexes. There is no search service,
 server endpoint, or Node runtime involved. A legacy
 `web/data/` release without institution or topic indexes still renders its
 existing pages, with empty collection browses and no dangling new detail links.
+It also renders a field directory at `/fields/` and one complete static paper
+browse page at `/fields/<field-key>/` for every normalized field.
 
 ## Run it
 
@@ -97,6 +99,21 @@ filter, sort, and bound. Each OpenAlex work-page observation in
 payload remains unchanged by that provenance tag. Thus one raw payload (and
 one work in it) may be observed in more than one field while retaining a
 separate manifest line for each observation.
+
+`export_json.py` carries that many-to-many membership into every work's
+`fields` array and writes `web/data/fields-index.json`, whose rows provide the
+normalized field key, name, description, and member count. `render.py` consumes
+both surfaces to build `/fields/` and `/fields/<field-key>/`. A field page lists
+all and only that field's exported members in `works-index.json` order; a work
+that belongs to several fields appears on each relevant field page, but all of
+those rows point to its single canonical `/w/<id>/` page.
+
+The committed data release predates those two export surfaces. For that legacy
+shape, the renderer derives the sole deterministic field key with
+`corpus_contract.normalize` and places every indexed work in that one field.
+This compatibility branch is intentionally limited to releases where both the
+field index and per-work membership arrays are absent; current and future
+exports retain their explicit memberships.
 
 ## The two things this site does that others do not
 

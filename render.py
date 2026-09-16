@@ -35,6 +35,8 @@ import shutil
 import sys
 from pathlib import Path
 
+import corpus_contract
+
 ROOT = Path(__file__).parent
 DATA = ROOT / "web" / "data"
 SITE = ROOT / "web" / "site"
@@ -43,6 +45,12 @@ ASSETS = ROOT / "web" / "assets"
 SITE_NAME = "Who Cited It"
 SITE_URL = "https://whocitedit.com"
 TAGLINE = "The citation and collaboration graph of open research, drawn and linked to its sources."
+
+
+# Set once for each static build, then used by the shared page chrome.  Detail
+# page renderers deliberately do not need to know which collection invoked
+# them: field navigation is shared navigation, not page-specific data.
+NAV_FIELDS: list[dict] = []
 
 
 # OpenAlex's work types are broader than RIS's record types. These mappings use
@@ -272,6 +280,29 @@ def search_index(works: list, authors: list, institutions: list, topics: list) -
     ]
 
 
+def field_navigation(root: str, class_name: str = "field-nav") -> str:
+    """Links for the directory and every normalized field in shared chrome."""
+    links = [f'<a href="{root}fields/">Fields</a>']
+    links.extend(
+        f'<a href="{root}fields/{e(field["key"])}/">{e(field["name"])}</a>'
+        for field in NAV_FIELDS
+    )
+    return f'<nav class="{class_name}" aria-label="Corpus fields">' + "".join(links) + "</nav>"
+
+
+def corpus_label(corpus: dict) -> str:
+    """Name a legacy single field or a multi-field corpus in shared copy."""
+    definition = corpus["definition"]
+    if definition.get("name"):
+        return definition["name"]
+    return "multiple fields"
+
+
+def corpus_description(corpus: dict) -> str:
+    definition = corpus["definition"]
+    return definition.get("description") or "A corpus spanning multiple normalized fields."
+
+
 # -- chrome ---------------------------------------------------------------
 
 def page(*, title: str, description: str, body: str, path: str, extra_head: str = "",
@@ -304,13 +335,14 @@ def page(*, title: str, description: str, body: str, path: str, extra_head: str 
     <div class="search-results" id="global-results" role="region" aria-live="polite"
          aria-label="Global search results"></div>
   </form>
-  <nav>
+  <nav class="site-nav" aria-label="Site navigation">
     <a href="{root}works/">Papers</a>
     <a href="{root}authors/">Authors</a>
     <a href="{root}institutions/">Institutions</a>
     <a href="{root}topics/">Topics</a>
     <a href="{root}methodology/">Methodology</a>
   </nav>
+  {field_navigation(root)}
 </div></header>
 <main class="wrap">
 {body}
@@ -1055,7 +1087,7 @@ def render_home(corpus: dict, works: list, authors: list) -> str:
     low_pct = ident["low"] / max(sum(ident.values()), 1)
     body = f"""
 <h1>{TAGLINE}</h1>
-<p class="lede">{e(corpus["definition"]["description"])} Every page is precomputed and
+<p class="lede">{e(corpus_description(corpus))} Every page is precomputed and
    every graph is drawn here rather than in your browser, so there is no login,
    no per-month graph allowance and nothing to wait for.</p>
 <div class="stats">
@@ -1068,7 +1100,7 @@ def render_home(corpus: dict, works: list, authors: list) -> str:
 <div class="panel">
   <h2>What this corpus is, exactly</h2>
   <p>The {num(c["works"])} most-cited works in OpenAlex's
-     <b>{e(corpus["definition"]["name"])}</b> subfield, every author on them, and every
+     <b>{e(corpus_label(corpus))}</b> subfield, every author on them, and every
      citation between two works that are both inside the set. That bound is
      committed to the repository as <span class="mono">corpus.json</span>, so
      &ldquo;why is this paper here and not that one&rdquo; has a diffable answer.
@@ -1101,6 +1133,7 @@ def render_home(corpus: dict, works: list, authors: list) -> str:
   <tbody>{top}</tbody>
 </table></div>
 <p class="meta"><a href="works/">All {num(c["works"])} papers</a> &middot;
+   <a href="fields/">Browse fields</a> &middot;
    <a href="authors/">All {num(c["authors"])} authors</a> &middot;
    <a href="institutions/">Browse institutions</a> &middot;
    <a href="topics/">Browse topics</a></p>
@@ -1155,6 +1188,7 @@ def render_browse(kind: str, rows: list, corpus: dict) -> str:
 <h1>{title}</h1>
 <p class="lede">{num(len(rows))} in this corpus. The table shows the first 400; search the
    whole set below.</p>
+{field_navigation("../", "field-browse-nav") if kind == "works" else ""}
 <label class="sr-only" for="collection-q">Search {title.lower()}</label>
 <input type="search" id="collection-q" placeholder="Search all {num(len(rows))} {title.lower()}&hellip;"
        data-collection-search data-index="../data/{index}" data-kind="{kind}"
@@ -1164,9 +1198,62 @@ def render_browse(kind: str, rows: list, corpus: dict) -> str:
 """
     return page(
         title=f"{title} — {SITE_NAME}",
-        description=f"All {num(len(rows))} {title.lower()} in the {corpus['definition']['name']} corpus.",
+        description=f"All {num(len(rows))} {title.lower()} in the {corpus_label(corpus)} corpus.",
         body=body,
         path=f"{kind}/",
+    )
+
+
+def render_fields(fields: list[dict]) -> str:
+    """Render the static directory of normalized corpus fields."""
+    rows = "".join(
+        f'<li><a href="{e(field["key"])}/">{e(field["name"])}</a>'
+        f'<span>{num(field["works"])} papers</span>'
+        + (f'<p>{e(field["description"])}</p>' if field.get("description") else "")
+        + "</li>"
+        for field in fields
+    )
+    body = f"""
+<h1>Fields</h1>
+<p class="lede">Browse every normalized field in this corpus. A paper can appear in more than one
+   field; its detail page remains one canonical paper page.</p>
+<ul class="field-directory">{rows}</ul>
+"""
+    return page(
+        title=f"Fields — {SITE_NAME}",
+        description="Every normalized field in this corpus and its complete paper list.",
+        body=body,
+        path="fields/",
+    )
+
+
+def render_field(field: dict, works: list, corpus: dict) -> str:
+    """Render every exported member of one field, in global works-index order."""
+    rows = "".join(
+        f'<tr><td><a href="../../w/{e(work["id"])}/">{e(work["title"])}</a>'
+        f'<br><span class="meta faint">{e(", ".join(work["authors"]))}</span></td>'
+        f'<td>{badge(work.get("quality"), hide="complete")}</td>'
+        f'<td class="num">{e(work["year"] or "")}</td>'
+        f'<td class="num">{num(work["cited"])}</td>'
+        f'<td class="num">{num(work["in_corpus_cited"])}</td></tr>'
+        for work in works
+    )
+    description = field.get("description") or (
+        f'Every paper in the {field["name"]} field of this corpus.'
+    )
+    body = f"""
+<h1>{e(field["name"])}</h1>
+<p class="lede">{e(description)} {num(len(works))} papers, shown in the corpus-wide paper order.</p>
+<div class="scroll"><table>
+  <thead><tr><th>Paper</th><th>Record</th><th class="num">Year</th><th class="num">Cited</th><th class="num">In corpus</th></tr></thead>
+  <tbody>{rows}</tbody>
+</table></div>
+"""
+    return page(
+        title=f'{field["name"]} papers — {SITE_NAME}',
+        description=description,
+        body=body,
+        path=f'fields/{field["key"]}/',
     )
 
 
@@ -1342,6 +1429,7 @@ def render_methodology(corpus: dict) -> str:
 # -- driver ---------------------------------------------------------------
 
 def main() -> int:
+    global NAV_FIELDS
     if not DATA.exists():
         print("no web/data: run `python3 export_json.py` first", file=sys.stderr)
         return 1
@@ -1354,6 +1442,36 @@ def main() -> int:
     notes = corpus["identity_notes"]
     bands = corpus["identity_bands"]
     quality_notes = corpus["quality_notes"]
+
+    exported_fields = load_optional("fields-index.json", None)
+    membership_presence = ["fields" in work for work in works_index]
+    has_any_memberships = any(membership_presence)
+    has_all_memberships = all(membership_presence)
+    if exported_fields is None and not has_any_memberships:
+        # Checked-in releases predating the membership export have only the
+        # legacy top-level definition.  It is one field, and every indexed work
+        # belongs to it; do not infer memberships from unrelated work metadata.
+        normalized = corpus_contract.normalize(corpus["definition"])
+        field_key, definition = next(iter(normalized.items()))
+        fields_index = [{
+            "key": field_key,
+            "name": definition["name"],
+            "description": definition.get("description"),
+            "works": len(works_index),
+        }]
+        field_works = {field_key: works_index}
+    elif exported_fields is None or not has_all_memberships:
+        print("incomplete field export: need both fields-index.json and work fields arrays", file=sys.stderr)
+        return 1
+    else:
+        fields_index = exported_fields
+        field_works = {
+            field["key"]: [
+                work for work in works_index if field["key"] in work["fields"]
+            ]
+            for field in fields_index
+        }
+    NAV_FIELDS = fields_index
 
     if SITE.exists():
         shutil.rmtree(SITE)
@@ -1413,6 +1531,12 @@ def main() -> int:
 
     total += write("index.html", render_home(corpus, works_index, authors_index))
     total += write("works/index.html", render_browse("works", works_index, corpus))
+    total += write("fields/index.html", render_fields(fields_index))
+    for field in fields_index:
+        total += write(
+            f"fields/{field['key']}/index.html",
+            render_field(field, field_works[field["key"]], corpus),
+        )
     total += write("authors/index.html", render_browse("authors", authors_index, corpus))
     total += write("authors/low-confidence/index.html", render_cohort("authors", "low", authors_index))
     total += write("works/partial/index.html", render_cohort("works", "partial", works_index))
@@ -1420,7 +1544,7 @@ def main() -> int:
     total += write("institutions/index.html", render_browse("institutions", institutions_index, corpus))
     total += write("topics/index.html", render_browse("topics", topics_index, corpus))
     total += write("methodology/index.html", render_methodology(corpus))
-    n += 9
+    n += 10 + len(fields_index)
 
     # The browse pages fetch these at runtime for search; the rest of the corpus
     # data is already baked into the HTML and is not shipped.
@@ -1447,8 +1571,9 @@ def main() -> int:
     write("robots.txt", f"User-agent: *\nAllow: /\nSitemap: {SITE_URL}/sitemap.xml\n")
     urls = "".join(
         f"<url><loc>{SITE_URL}/{p}</loc></url>"
-        for p in ["", "works/", "works/partial/", "works/suspect/", "authors/",
+        for p in ["", "works/", "works/partial/", "works/suspect/", "fields/", "authors/",
                   "authors/low-confidence/", "institutions/", "topics/", "methodology/"]
+        + [f"fields/{field['key']}/" for field in fields_index]
         + [f"w/{w['id']}/" for w in works_index]
         + [f"a/{a['id']}/" for a in authors_index]
         + [f"i/{i['id']}/" for i in institutions_index]

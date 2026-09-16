@@ -16,6 +16,7 @@ import tempfile
 from urllib.parse import unquote, urlsplit
 
 import render
+import corpus_contract
 
 
 ROOT = Path(__file__).parent
@@ -31,6 +32,7 @@ FIXED_HTML_ROUTES = {
     "institutions/index.html",
     "topics/index.html",
     "methodology/index.html",
+    "fields/index.html",
 }
 DETAIL_ROUTES = {
     "works": "w",
@@ -43,7 +45,7 @@ DETAIL_ROUTES = {
 @contextmanager
 def rendered_site():
     """Render repository inputs into a disposable site and restore render globals."""
-    saved = render.DATA, render.SITE, render.ASSETS
+    saved = render.DATA, render.SITE, render.ASSETS, render.NAV_FIELDS
     temporary = Path(tempfile.mkdtemp())
     try:
         render.DATA = DATA
@@ -53,7 +55,7 @@ def rendered_site():
             raise AssertionError("render.main() failed for the committed corpus")
         yield render.SITE
     finally:
-        render.DATA, render.SITE, render.ASSETS = saved
+        render.DATA, render.SITE, render.ASSETS, render.NAV_FIELDS = saved
         shutil.rmtree(temporary, ignore_errors=True)
 
 
@@ -87,6 +89,13 @@ def load_index(name: str) -> list[dict]:
 
 def expected_html_routes() -> set[str]:
     routes = set(FIXED_HTML_ROUTES)
+    field_index = DATA / "fields-index.json"
+    if field_index.exists():
+        field_keys = [field["key"] for field in load_index("fields-index.json")]
+    else:
+        corpus = json.loads((DATA / "corpus.json").read_text())
+        field_keys = corpus_contract.normalize(corpus["definition"])
+    routes.update(f"fields/{key}/index.html" for key in field_keys)
     for index_name, route_prefix in DETAIL_ROUTES.items():
         for row in load_index(f"{index_name}-index.json"):
             routes.add(f"{route_prefix}/{row['id']}/index.html")
