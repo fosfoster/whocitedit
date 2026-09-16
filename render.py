@@ -269,12 +269,17 @@ def load_optional(name: str, default):
 def search_index(works: list, authors: list, institutions: list, topics: list) -> list[dict]:
     """Project browse indexes into the small, stable global search contract."""
     return [
-        {"kind": kind, "id": row["id"], "label": row[label]}
-        for kind, label, rows in (
-            ("work", "title", works),
-            ("author", "name", authors),
-            ("institution", "name", institutions),
-            ("topic", "name", topics),
+        {
+            "kind": kind,
+            "id": row["id"],
+            "label": row[label],
+            **({"state": row[state]} if state else {}),
+        }
+        for kind, label, state, rows in (
+            ("work", "title", "quality", works),
+            ("author", "name", "band", authors),
+            ("institution", "name", None, institutions),
+            ("topic", "name", None, topics),
         )
         for row in rows
     ]
