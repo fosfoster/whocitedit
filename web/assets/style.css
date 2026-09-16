@@ -183,6 +183,7 @@ input[type=search]:focus-visible, a:focus-visible, button:focus-visible {
 .hits a, .search-results a { display: block; padding: 7px 0; border-bottom: 1px solid var(--rule); text-decoration: none; color: var(--ink); font-size: 14px; }
 .hits a:hover, .search-results a:hover { color: var(--accent); }
 .hits small, .search-results small { color: var(--ink-faint); }
+.search-results .badge { margin-left: 6px; vertical-align: middle; }
 
 @media (max-width: 760px) {
   header.site .wrap { align-items: stretch; flex-wrap: wrap; }
@@ -193,6 +194,8 @@ input[type=search]:focus-visible, a:focus-visible, button:focus-visible {
   .global-search .search-results { position: static; margin-top: 5px; }
   .edge-evidence-list li { grid-template-columns: 1fr; gap: 3px; }
   .edge-status { text-align: left; }
+  .search-results a { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+  .search-results .badge { margin-left: 0; }
 }
 
 /* Work-record quality reuses the confidence colours: the two bands say the same

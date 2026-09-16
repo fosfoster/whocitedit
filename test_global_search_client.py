@@ -71,6 +71,19 @@ def main() -> int:
         kinds = {kind: [row for row in records if row["kind"] == kind] for kind in routes}
         bad += check(all(kinds.values()), "synthetic global index lacks a fixture for a search kind")
 
+        # The state contract the client renders badges from: authors carry an
+        # identity band, works carry a quality band, institutions/topics carry none.
+        identity_bands = {"high", "medium", "low"}
+        quality_bands = {"complete", "partial", "suspect"}
+        bad += check(all(row.get("state") in identity_bands for row in kinds["author"]),
+                     "author global rows lack a recognized identity band")
+        bad += check(all(row.get("state") in quality_bands for row in kinds["work"]),
+                     "work global rows lack a recognized quality band")
+        bad += check(all("state" not in row for row in kinds["institution"]),
+                     "institution global rows unexpectedly carry a state")
+        bad += check(all("state" not in row for row in kinds["topic"]),
+                     "topic global rows unexpectedly carry a state")
+
         # Exercise mixed-case title/name lookup and ID lookup for every kind,
         # then require the link target the browser would build to exist locally.
         for kind, route in routes.items():
@@ -119,6 +132,10 @@ def main() -> int:
             "meta.textContent = detail;",
             "globalTypes[row.kind]",
             "encodeURIComponent(row.id)",
+            'text: state + " confidence"',
+            'text: state + " record quality"',
+            "chip.className = \"badge \" + badge.className;",
+            "chip.textContent = badge.text;",
             "No results match your search.",
             "Search is unavailable. Please try again.",
             "data-collection-search",
@@ -130,6 +147,15 @@ def main() -> int:
             bad += check(contract in client, f"client contract missing: {contract}")
         bad += check("innerHTML" not in client,
                      "search result labels are not exclusively inserted as DOM text")
+        badges_start = client.find("var globalBadges")
+        badges_end = client.find("};", badges_start)
+        badges_block = client[badges_start:badges_end]
+        bad += check("author:" in badges_block and "work:" in badges_block,
+                     "global badge map does not cover author and work kinds")
+        bad += check("institution:" not in badges_block and "topic:" not in badges_block,
+                     "institutions/topics unexpectedly carry a global search badge mapping")
+        bad += check("badgeFor && badgeFor(row.state)" in client,
+                     "global result rendering does not gate the badge on the row's kind")
         empty_guard = client.find("if (!query) return;")
         global_load = client.find("loadGlobal(form.dataset.index)")
         bad += check(0 <= empty_guard < global_load,
@@ -149,6 +175,13 @@ def main() -> int:
                      "header search does not wrap onto a full-width row at narrow widths")
         bad += check(":focus-visible" in css and "outline:" in css,
                      "search controls and results lack visible keyboard focus")
+        bad += check(".search-results .badge {" in css,
+                     "global search badges lack their own spacing/alignment rule")
+        narrow = css[css.find("@media (max-width: 760px) {"):]
+        bad += check(".search-results a { display: flex" in narrow and ".search-results .badge {" in narrow,
+                     "global search badges lack narrow-width layout rules")
+        bad += check(".badge.high {" in css and ".badge.complete {" in css,
+                     "search badges do not reuse the existing confidence/quality band colors")
 
         readme = (Path(__file__).parent / "README.md").read_text()
         bad += check("does not\nrequest its local index until the reader enters a non-empty query" in readme

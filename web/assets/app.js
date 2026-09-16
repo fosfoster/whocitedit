@@ -3,6 +3,10 @@
   var MAX_RESULTS = 60;
   var globalRoutes = { work: "w", author: "a", institution: "i", topic: "t" };
   var globalTypes = { work: "Paper", author: "Author", institution: "Institution", topic: "Topic" };
+  var globalBadges = {
+    author: function (state) { return state ? { className: state, text: state + " confidence" } : null; },
+    work: function (state) { return state ? { className: state, text: state + " record quality" } : null; }
+  };
   var collectionRoutes = { works: "w", authors: "a", institutions: "i", topics: "t" };
   var globalRows = null;
   var globalLoad = null;
@@ -18,7 +22,7 @@
     region.appendChild(message);
   }
 
-  function link(region, href, label, detail) {
+  function link(region, href, label, detail, badge) {
     var item = document.createElement("a");
     item.href = href;
     item.appendChild(document.createTextNode(label));
@@ -27,6 +31,13 @@
       meta.textContent = detail;
       item.appendChild(document.createTextNode(" "));
       item.appendChild(meta);
+    }
+    if (badge) {
+      var chip = document.createElement("span");
+      chip.className = "badge " + badge.className;
+      chip.textContent = badge.text;
+      item.appendChild(document.createTextNode(" "));
+      item.appendChild(chip);
     }
     region.appendChild(item);
   }
@@ -70,8 +81,9 @@
       shown.forEach(function (row) {
         var route = globalRoutes[row.kind];
         if (!route) return;
+        var badgeFor = globalBadges[row.kind];
         link(results, form.dataset.root + route + "/" + encodeURIComponent(row.id) + "/",
-             row.label || row.id, globalTypes[row.kind]);
+             row.label || row.id, globalTypes[row.kind], badgeFor && badgeFor(row.state));
       });
     }
 
