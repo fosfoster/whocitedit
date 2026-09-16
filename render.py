@@ -1332,7 +1332,8 @@ def render_methodology(corpus: dict) -> str:
     if isinstance(declared_sources, dict):
         declared_sources = declared_sources.values()
     src_rows = "".join(
-        f'<tr><td><a href="{e(s["url"])}">{e(s["name"])}</a></td><td>{e(s["license"])}</td>'
+        f'<tr><td>{e(s["name"])}</td>'
+        f'<td><a href="{e(s["url"])}">{e(s["url"])}</a></td><td>{e(s["license"])}</td>'
         f'<td>{e(s["role"])}</td></tr>'
         for s in declared_sources
     )
@@ -1344,7 +1345,7 @@ def render_methodology(corpus: dict) -> str:
 <div class="panel">
 <h2>Sources</h2>
 <div class="scroll"><table>
-  <thead><tr><th>Source</th><th>Licence</th><th>Used for</th></tr></thead>
+  <thead><tr><th>Source</th><th>URL</th><th>Licence</th><th>Used for</th></tr></thead>
   <tbody>{src_rows}</tbody>
 </table></div>
 <p class="meta">Nothing here is scraped from a publisher's website. Every record comes

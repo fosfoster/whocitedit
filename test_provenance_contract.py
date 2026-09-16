@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Focused export-to-render provenance and citation-source contract."""
-import html
 import json
 import shutil
 import sys
 import tempfile
+from html.parser import HTMLParser
 from pathlib import Path
 
 import export_json
@@ -62,13 +62,32 @@ def stage_provenance(conn) -> None:
     conn.commit()
 
 
-def source_row(source: dict) -> str:
-    return (
-        f'<tr><td><a href="{html.escape(source["url"], quote=True)}">'
-        f'{html.escape(source["name"], quote=True)}</a></td>'
-        f'<td>{html.escape(source["license"], quote=True)}</td>'
-        f'<td>{html.escape(source["role"], quote=True)}</td></tr>'
-    )
+class VisibleTableRows(HTMLParser):
+    """Collect visible table-row text without counting tag attributes."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.rows: list[str] = []
+        self._parts: list[str] | None = None
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        if tag == "tr":
+            self._parts = []
+
+    def handle_data(self, data: str) -> None:
+        if self._parts is not None:
+            self._parts.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "tr" and self._parts is not None:
+            self.rows.append(" ".join("".join(self._parts).split()))
+            self._parts = None
+
+
+def visible_table_rows(document: str) -> list[str]:
+    parser = VisibleTableRows()
+    parser.feed(document)
+    return parser.rows
 
 
 def main() -> int:
@@ -153,9 +172,20 @@ def main() -> int:
                      "OpenCitations-only citation evidence is not disclosed")
         bad += check("independently assert the same directed DOI-resolved edge" in methodology,
                      "citation corroboration methodology is missing")
+        methodology_rows = visible_table_rows(methodology)
         for source_id, source in declarations.items():
-            bad += check(source_row(source) in methodology,
-                         f"methodology does not disclose every field for {source_id}")
+            matching_rows = [row for row in methodology_rows if source["name"] in row]
+            bad += check(
+                any(source["url"] in row for row in matching_rows),
+                f"methodology does not visibly disclose the URL for {source_id}",
+            )
+            bad += check(
+                any(
+                    all(source[field] in row for field in ("name", "url", "license", "role"))
+                    for row in matching_rows
+                ),
+                f"methodology does not visibly disclose every field for {source_id}",
+            )
     finally:
         (export_json.OUT, export_json.DB_PATH, export_json.ROOT,
          render.DATA, render.SITE, render.ASSETS) = saved
