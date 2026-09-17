@@ -134,6 +134,7 @@ tr:last-child td { border-bottom: 0; }
 .dir.supports { color: var(--high); }
 .dir.weakens { color: var(--low); }
 .dir.neutral { color: var(--ink-faint); }
+.provenance-list .source { grid-column: 1 / -1; overflow-wrap: anywhere; }
 
 figure.graph { margin: 0 0 8px; }
 figure.graph svg { width: 100%; height: auto; display: block; background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; }

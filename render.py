@@ -34,6 +34,7 @@ import math
 import shutil
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import corpus_contract
 
@@ -553,17 +554,55 @@ def evidence_html(evidence: list[dict], notes: dict) -> str:
     return f'<ul class="evidence">{"".join(rows)}</ul>'
 
 
+def valid_source_url(value) -> bool:
+    """True only for an absolute http(s) URL, as exported for a stored payload's source.
+
+    A payload's `url` is copied from the harvest manifest without inspection, and
+    synthetic corpora record `file://` sources, so before a page links a reader
+    to where a record came from the value has to be a link a browser can
+    follow: a scheme of http or https, a host, and nothing a URL cannot carry
+    raw. Everything else -- a relative path, another scheme, whitespace, a
+    missing value -- is false rather than a guess.
+    """
+    if not isinstance(value, str) or not value:
+        return False
+    if any(char.isspace() or not char.isprintable() for char in value):
+        return False
+    try:
+        parts = urlsplit(value)
+        parts.port  # raises for a non-numeric or out-of-range port
+    except ValueError:
+        return False
+    return parts.scheme in ("http", "https") and bool(parts.hostname)
+
+
+def source_url_html(url) -> str:
+    """Where a payload was fetched from, linked only when a browser could follow it.
+
+    A value that fails validation is still shown, as text: hiding it would make
+    a bad manifest entry look like a missing one, and linking it would send a
+    reader somewhere this site never checked. An absent value says so.
+    """
+    if valid_source_url(url):
+        return f'<span class="source">source <a href="{e(url)}">{e(url)}</a></span>'
+    if url is None or (isinstance(url, str) and not url.strip()):
+        return '<span class="source faint">source URL not recorded</span>'
+    return f'<span class="source faint">source {e(url)}</span>'
+
+
 def provenance_html(raw, payloads: dict) -> str:
-    """Show every source payload behind an aggregate, including its fetch date."""
+    """Show every source payload behind an aggregate, with its fetch date and source."""
     hashes = sorted(set(raw if isinstance(raw, list) else [raw] if raw else []))
     if not hashes:
         return '<p class="faint">No source payload hash was recorded.</p>'
     rows = []
     for sha in hashes:
-        fetched = payloads.get(sha, {}).get("fetched_at", "unknown")
+        payload = payloads.get(sha) or {}
+        fetched = payload.get("fetched_at", "unknown")
         rows.append(
             f'<li><span class="mono">sha256 {e(sha)}</span> '
-            f'<span class="faint">fetched {e(fetched)}</span></li>'
+            f'<span class="faint">fetched {e(fetched)}</span> '
+            f'{source_url_html(payload.get("url"))}</li>'
         )
     return '<ul class="evidence provenance-list">' + "".join(rows) + "</ul>"
 
