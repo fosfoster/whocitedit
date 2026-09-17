@@ -34,6 +34,7 @@ import math
 import shutil
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import corpus_contract
 
@@ -553,6 +554,41 @@ def evidence_html(evidence: list[dict], notes: dict) -> str:
     return f'<ul class="evidence">{"".join(rows)}</ul>'
 
 
+def valid_source_url(url) -> bool:
+    """True only for an absolute http(s) URL a reader could paste and follow.
+
+    Whitespace is rejected as well as the obvious failures, and not for
+    tidiness: a browser strips tabs and newlines out of an href before
+    resolving it, so a URL carrying one is not the URL the page displays.
+    """
+    if not isinstance(url, str) or not url or any(c.isspace() for c in url):
+        return False
+    try:
+        parsed = urlsplit(url)
+        _port = parsed.port  # raises on a malformed port
+    except ValueError:  # an unparseable authority, e.g. a truncated IPv6 literal
+        return False
+    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+
+
+def payload_source_link(sha: str, url) -> str:
+    """The payload hash, linked to the URL those bytes were fetched from.
+
+    The hash is the anchor text and not the URL itself because a harvested URL
+    here is a 900-character OR-filter over 50 ids; the methodology page is where
+    source URLs are read, and this is where they are followed.
+
+    Escaping is the whole of the safety: `e` turns `"`, `<`, `>` and `&` into
+    character references, so the href ends at the quote this renderer wrote
+    rather than at one inside the data, and an HTML parser hands the stored URL
+    back character for character. A URL that fails validation is not linked at
+    all -- an anchor a reader cannot follow claims a check this site never made.
+    """
+    if not valid_source_url(url):
+        return f'<span class="mono">sha256 {e(sha)}</span>'
+    return f'<a class="mono" href="{e(url)}">sha256 {e(sha)}</a>'
+
+
 def provenance_html(raw, payloads: dict) -> str:
     """Show every source payload behind an aggregate, including its fetch date."""
     hashes = sorted(set(raw if isinstance(raw, list) else [raw] if raw else []))
@@ -560,9 +596,10 @@ def provenance_html(raw, payloads: dict) -> str:
         return '<p class="faint">No source payload hash was recorded.</p>'
     rows = []
     for sha in hashes:
-        fetched = payloads.get(sha, {}).get("fetched_at", "unknown")
+        payload = payloads.get(sha, {})
+        fetched = payload.get("fetched_at", "unknown")
         rows.append(
-            f'<li><span class="mono">sha256 {e(sha)}</span> '
+            f'<li>{payload_source_link(sha, payload.get("url"))} '
             f'<span class="faint">fetched {e(fetched)}</span></li>'
         )
     return '<ul class="evidence provenance-list">' + "".join(rows) + "</ul>"
