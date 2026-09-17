@@ -121,6 +121,60 @@ def _crossref_comparison(conn, wid: str, source_name: str | None, work_type: str
     }
 
 
+# Crossref's only job on a work page. It is declared apart from
+# `citation_sources` because it asserts no citation edge, and that map is
+# contractually the set of indexes an edge may cite.
+METADATA_SOURCES = {
+    "openalex": {
+        "id": "openalex",
+        "name": "OpenAlex",
+        "url": "https://openalex.org",
+        "license": "CC0",
+        "role": "the work record as rendered: title, publication date, venue and type",
+    },
+    "crossref": {
+        "id": "crossref",
+        "name": "Crossref",
+        "url": "https://www.crossref.org/",
+        "license": "bibliographic metadata only; no abstracts or full text",
+        "role": "title and publication-date comparison against the OpenAlex work record",
+    },
+}
+
+
+def _record_comparison(conn, row) -> dict | None:
+    """OpenAlex's title and date beside Crossref's, each named by its source and payload.
+
+    Additive only: the OpenAlex values here are the same ones the work carries
+    at the top level, restated so the reader can see both assertions and the
+    bytes each came from. Same earliest-by-raw_sha choice as the venue/type
+    comparison so the two panels describe one envelope.
+    """
+    assertion = conn.execute(
+        "SELECT raw_sha, title, published FROM crossref_work_assertion "
+        "WHERE work_id = ? ORDER BY raw_sha LIMIT 1",
+        (row["id"],),
+    ).fetchone()
+    if assertion is None:
+        return None
+    openalex_date = row["publication_date"] or (str(row["year"]) if row["year"] else None)
+    date_status, precision = derive.date_comparison(openalex_date, assertion["published"])
+    return {
+        "role": METADATA_SOURCES["crossref"]["role"],
+        "title": {
+            "status": derive.title_comparison_status(row["title"], assertion["title"]),
+            "openalex": {"source": "openalex", "value": row["title"], "raw": row["raw_sha"]},
+            "crossref": {"source": "crossref", "value": assertion["title"], "raw": assertion["raw_sha"]},
+        },
+        "date": {
+            "status": date_status,
+            "precision": precision,
+            "openalex": {"source": "openalex", "value": openalex_date, "raw": row["raw_sha"]},
+            "crossref": {"source": "crossref", "value": assertion["published"], "raw": assertion["raw_sha"]},
+        },
+    }
+
+
 def work_payload(conn, row, neighbourhood) -> dict:
     wid = row["id"]
     fields = [
@@ -187,6 +241,7 @@ def work_payload(conn, row, neighbourhood) -> dict:
         "raw": _provenance(conn, row["raw_sha"]),
         "openalex_url": f"https://openalex.org/{wid}",
         "crossref_comparison": _crossref_comparison(conn, wid, row["source_name"], row["type"]),
+        "record_comparison": _record_comparison(conn, row),
     }
 
 
@@ -846,6 +901,7 @@ def main() -> int:
                 {key: value for key, value in source.items() if key != "id"}
                 for source in citation_sources.values()
             ],
+            "metadata_sources": METADATA_SOURCES,
         },
     )
     print(f"== wrote {len(work_index)} works, {len(author_index)} authors, "

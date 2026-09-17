@@ -212,6 +212,13 @@ CREATE TABLE IF NOT EXISTS crossref_work_assertion (
   venue      TEXT,
   venue_short TEXT,
   work_type  TEXT,
+  -- Plain text, markup stripped, otherwise as asserted: normalization happens
+  -- only at comparison time so the reader sees what Crossref actually said.
+  title      TEXT,
+  -- Kept at the precision Crossref supplied ("2020", "2020-03", "2020-03-15").
+  -- A year-only date is never padded to January 1st; that would invent a
+  -- disagreement (or an agreement) the source never asserted.
+  published  TEXT,
   PRIMARY KEY (work_id, raw_sha)
 );
 CREATE INDEX IF NOT EXISTS crossref_work_assertion_work ON crossref_work_assertion(work_id);
@@ -235,6 +242,10 @@ def connect(path: Path | str = DB_PATH) -> sqlite3.Connection:
             conn.execute(
                 f"ALTER TABLE {table} ADD COLUMN raw_sha TEXT REFERENCES raw_payload(sha256)"
             )
+    columns = {r["name"] for r in conn.execute("PRAGMA table_info(crossref_work_assertion)")}
+    for column in ("title", "published"):
+        if column not in columns:
+            conn.execute(f"ALTER TABLE crossref_work_assertion ADD COLUMN {column} TEXT")
     return conn
 
 
