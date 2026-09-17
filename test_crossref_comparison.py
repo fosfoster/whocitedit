@@ -275,7 +275,7 @@ def main() -> int:
         crossref_role = (corpus.get("metadata_sources") or {}).get("crossref", {}).get("role", "")
         bad += check("title" in crossref_role and "date" in crossref_role,
                      f"corpus.json does not declare Crossref's title/date comparison role: {crossref_role!r}")
-        bad += check(set(corpus["citation_sources"]) == {"openalex", "opencitations"},
+        bad += check(set(corpus["citation_sources"]) == {"openalex", "opencitations", "europepmc"},
                      "Crossref leaked into the citation-edge source declarations")
 
         for wid in expected:
