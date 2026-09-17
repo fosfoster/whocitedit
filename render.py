@@ -792,16 +792,28 @@ def neighbour_list(w: dict, kind: str, heading: str) -> str:
 </table></div>"""
 
 
+CITATION_SOURCE_NAMES = {
+    "openalex": "OpenAlex",
+    "opencitations": "OpenCitations",
+    "europepmc": "Europe PMC",
+}
+
+
 def citation_edge_status(edge: dict) -> tuple[str, str]:
     """Return a stable machine name and reader-facing source assessment."""
     raw_sources = edge.get("sources") or []
     sources = {raw_sources} if isinstance(raw_sources, str) else set(raw_sources)
-    if {"openalex", "opencitations"} <= sources:
-        return "corroborated", "Corroborated — OpenAlex and OpenCitations"
-    if "openalex" in sources:
+    present = [s for s in CITATION_SOURCE_NAMES if s in sources]
+    if len(present) >= 2:
+        names = [CITATION_SOURCE_NAMES[s] for s in present]
+        label = ", ".join(names[:-1]) + " and " + names[-1]
+        return "corroborated", f"Corroborated — {label}"
+    if present == ["openalex"]:
         return "openalex-only", "OpenAlex only"
-    if "opencitations" in sources:
+    if present == ["opencitations"]:
         return "opencitations-only", "OpenCitations only — unconfirmed by OpenAlex"
+    if present == ["europepmc"]:
+        return "europepmc-only", "Europe PMC only"
     return "legacy", "Legacy edge — source detail unavailable"
 
 
@@ -1552,9 +1564,9 @@ def render_methodology(corpus: dict) -> str:
 
 <div class="panel">
 <h2>How citation edges are corroborated</h2>
-<p>We call a citation edge <b>corroborated</b> only when OpenAlex and
-   OpenCitations independently assert the same directed DOI-resolved edge: the
-   same citing work points to the same cited work.</p>
+<p>We call a citation edge <b>corroborated</b> only when at least two of OpenAlex,
+   OpenCitations and Europe PMC independently assert the same directed DOI-resolved edge:
+   the same citing work points to the same cited work.</p>
 <p>An edge asserted by only one index remains visible. Its work-page evidence
    identifies the single index, and an OpenCitations-only edge is explicitly
    marked unconfirmed by OpenAlex.</p>

@@ -863,6 +863,13 @@ def main() -> int:
             "license": "CC0",
             "role": "citation edges",
         },
+        "europepmc": {
+            "id": "europepmc",
+            "name": "Europe PMC",
+            "url": "https://europepmc.org",
+            "license": "CC BY (REST API, per-record licence as published)",
+            "role": "citation edges",
+        },
     }
     _write(
         OUT / "corpus.json",

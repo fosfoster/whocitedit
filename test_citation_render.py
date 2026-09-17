@@ -20,11 +20,16 @@ def work_page() -> str:
         {"id": "W2", "label": "Reference", "kind": "reference", "cited": 8, "x": 200, "y": 200},
         {"id": "W3", "label": "Citer", "kind": "citer", "cited": 6, "x": 300, "y": 100},
         {"id": "W4", "label": "Neighbour", "kind": "reference", "cited": 4, "x": 400, "y": 200},
+        {"id": "W5", "label": "Biomedical", "kind": "reference", "cited": 3, "x": 500, "y": 200},
+        {"id": "W6", "label": "Triple", "kind": "citer", "cited": 2, "x": 500, "y": 100},
     ]
     edges = [
         {"s": "W1", "t": "W2", "sources": ["openalex", "opencitations"]},
         {"s": "W3", "t": "W1", "sources": ["openalex"]},
         {"s": "W1", "t": "W4", "sources": ["opencitations"]},
+        {"s": "W1", "t": "W5", "sources": ["europepmc"]},
+        {"s": "W6", "t": "W1", "sources": ["europepmc", "openalex", "opencitations"]},
+        {"s": "W6", "t": "W5", "sources": ["europepmc", "openalex"], "inner": True},
         # This neighbour-to-neighbour edge proves the evidence list is made
         # from all exported edges, rather than reconstructed from two tables.
         {"s": "W3", "t": "W2", "sources": [], "inner": True},
@@ -81,7 +86,8 @@ def main() -> int:
         (html.unescape(citing), html.unescape(cited)): (status, html.unescape(body))
         for citing, cited, status, body in rows
     }
-    expected_edges = {("W1", "W2"), ("W3", "W1"), ("W1", "W4"), ("W3", "W2"), ("W4", "W2")}
+    expected_edges = {("W1", "W2"), ("W3", "W1"), ("W1", "W4"), ("W3", "W2"), ("W4", "W2"),
+                      ("W1", "W5"), ("W6", "W1"), ("W6", "W5")}
     bad += check(set(evidence) == expected_edges,
                  "the evidence output does not represent every exported graph edge")
     bad += check(
@@ -99,6 +105,22 @@ def main() -> int:
         and "OpenCitations only — unconfirmed by OpenAlex" in evidence[("W1", "W4")][1],
         "the OpenCitations-only edge is not called unconfirmed by OpenAlex",
     )
+    bad += check(
+        evidence.get(("W1", "W5"), (None, ""))[0] == "europepmc-only"
+        and "Europe PMC only" in evidence[("W1", "W5")][1],
+        "the Europe PMC-only edge is not identified",
+    )
+    bad += check(
+        evidence.get(("W6", "W1"), (None, ""))[0] == "corroborated"
+        and all(name in evidence[("W6", "W1")][1]
+                for name in ("OpenAlex", "OpenCitations", "Europe PMC")),
+        "the three-index edge does not name all three corroborating indexes",
+    )
+    bad += check(
+        evidence.get(("W6", "W5"), (None, ""))[0] == "corroborated"
+        and "Corroborated — OpenAlex and Europe PMC" in evidence[("W6", "W5")][1],
+        "a two-of-three edge is not labelled corroborated by the indexes that assert it",
+    )
     for edge in (("W3", "W2"), ("W4", "W2")):
         bad += check(
             evidence.get(edge, (None, ""))[0] == "legacy"
@@ -115,6 +137,10 @@ def main() -> int:
     bad += check(
         "independently assert the same directed DOI-resolved edge" in methodology,
         "methodology does not define the corroboration rule",
+    )
+    bad += check(
+        all(name in methodology for name in ("OpenAlex", "OpenCitations", "Europe PMC")),
+        "methodology does not name all three citation indexes in the corroboration rule",
     )
     bad += check(
         "An edge asserted by only one index remains visible" in methodology,
