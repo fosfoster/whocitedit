@@ -649,18 +649,32 @@ def payload_source_link(sha: str, url) -> str:
     return f'<a class="mono" href="{e(url)}">sha256 {e(sha)}</a>'
 
 
+def rejected_source_note(url) -> str:
+    """Text noting a source URL that failed validation, beside the plain hash.
+
+    Only shown when `payload_source_link` declined to link the hash: an absent
+    or blank value says so plainly, and a present-but-invalid value is echoed
+    as text so a bad manifest entry is still visible, never silently dropped.
+    """
+    if url is None or (isinstance(url, str) and not url.strip()):
+        return '<span class="source faint">source URL not recorded</span>'
+    return f'<span class="source faint">source {e(url)}</span>'
+
+
 def provenance_html(raw, payloads: dict) -> str:
-    """Show every source payload behind an aggregate, including its fetch date."""
+    """Show every source payload behind an aggregate, with its fetch date and source."""
     hashes = sorted(set(raw if isinstance(raw, list) else [raw] if raw else []))
     if not hashes:
         return '<p class="faint">No source payload hash was recorded.</p>'
     rows = []
     for sha in hashes:
-        payload = payloads.get(sha, {})
+        payload = payloads.get(sha) or {}
+        url = payload.get("url")
         fetched = payload.get("fetched_at", "unknown")
+        note = "" if valid_source_url(url) else f" {rejected_source_note(url)}"
         rows.append(
-            f'<li>{payload_source_link(sha, payload.get("url"))} '
-            f'<span class="faint">fetched {e(fetched)}</span></li>'
+            f'<li>{payload_source_link(sha, url)} '
+            f'<span class="faint">fetched {e(fetched)}</span>{note}</li>'
         )
     return '<ul class="evidence provenance-list">' + "".join(rows) + "</ul>"
 
