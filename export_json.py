@@ -121,6 +121,57 @@ def _crossref_comparison(conn, wid: str, source_name: str | None, work_type: str
     }
 
 
+SOURCE_COMPARISON_ROLE = (
+    "Crossref is shown beside OpenAlex as a parallel observation of the same "
+    "work; neither record is corrected by the other."
+)
+
+
+def _source_comparison(conn, wid: str, source_name: str | None, work_type: str | None, raw_sha: str) -> dict:
+    """Every Crossref venue/type assertion for this work, beside OpenAlex's own.
+
+    Unlike `_crossref_comparison` above, which compares against only the
+    earliest envelope, this keeps every Crossref observation so a reader can
+    see all of them -- and a work's combined status disagrees if any one of
+    them does, even when another agrees.
+    """
+    rows = conn.execute(
+        "SELECT raw_sha, venue, venue_short, work_type FROM crossref_work_assertion "
+        "WHERE work_id = ? ORDER BY raw_sha",
+        (wid,),
+    ).fetchall()
+
+    venue_crossref = [
+        {"source": "Crossref", "value": r["venue"] or r["venue_short"], "raw": r["raw_sha"]}
+        for r in rows
+    ]
+    type_crossref = [
+        {"source": "Crossref", "value": r["work_type"], "raw": r["raw_sha"]}
+        for r in rows
+    ]
+
+    venue_status = derive.combined_comparison_status(
+        [derive.venue_comparison_status(source_name, r["venue"], r["venue_short"]) for r in rows]
+    )
+    work_type_status = derive.combined_comparison_status(
+        [derive.work_type_comparison_status(work_type, r["work_type"]) for r in rows]
+    )
+
+    return {
+        "role": SOURCE_COMPARISON_ROLE,
+        "venue": {
+            "openalex": {"source": "OpenAlex", "value": source_name, "raw": raw_sha},
+            "crossref": venue_crossref,
+            "status": venue_status,
+        },
+        "work_type": {
+            "openalex": {"source": "OpenAlex", "value": work_type, "raw": raw_sha},
+            "crossref": type_crossref,
+            "status": work_type_status,
+        },
+    }
+
+
 # Crossref's only job on a work page. It is declared apart from
 # `citation_sources` because it asserts no citation edge, and that map is
 # contractually the set of indexes an edge may cite.
@@ -242,6 +293,7 @@ def work_payload(conn, row, neighbourhood) -> dict:
         "openalex_url": f"https://openalex.org/{wid}",
         "crossref_comparison": _crossref_comparison(conn, wid, row["source_name"], row["type"]),
         "record_comparison": _record_comparison(conn, row),
+        "source_comparison": _source_comparison(conn, wid, row["source_name"], row["type"], row["raw_sha"]),
     }
 
 

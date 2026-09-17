@@ -725,14 +725,41 @@ def work_type_comparison_status(openalex_type: str | None, crossref_type: str | 
     return "agree" if expected == openalex_type else "disagree"
 
 
+def combined_comparison_status(statuses: list[str]) -> str:
+    """Fold several per-assertion comparison statuses into one.
+
+    `unavailable` when none of them is comparable (a work with no Crossref
+    assertion is the same case as one whose only assertions are
+    `incomparable`), `agree` when every comparable one agrees, `disagree`
+    otherwise -- so a single dissenting Crossref envelope is enough to flag
+    the work even if another one agrees.
+    """
+    comparable = [s for s in statuses if s not in ("unavailable", "incomparable")]
+    if not comparable:
+        return "unavailable"
+    return "agree" if all(s == "agree" for s in comparable) else "disagree"
+
+
 def score_quality(conn) -> dict[str, int]:
     """Flag work records that contradict themselves. Nothing is deleted."""
     bands = {quality.COMPLETE: 0, quality.PARTIAL: 0, quality.SUSPECT: 0}
     for row in conn.execute(
         "SELECT w.id, w.title, w.doi, w.year, w.referenced_count, w.cited_by_count,"
+        "       w.type, w.source_name,"
         "       (SELECT COUNT(*) FROM authorship a WHERE a.work_id = w.id) AS n_authors"
         "  FROM work w"
     ):
+        assertions = conn.execute(
+            "SELECT venue, venue_short, work_type FROM crossref_work_assertion "
+            "WHERE work_id = ? ORDER BY raw_sha",
+            (row["id"],),
+        ).fetchall()
+        venue_status = combined_comparison_status(
+            [venue_comparison_status(row["source_name"], a["venue"], a["venue_short"]) for a in assertions]
+        )
+        work_type_status = combined_comparison_status(
+            [work_type_comparison_status(row["type"], a["work_type"]) for a in assertions]
+        )
         band, evidence = quality.assess(
             title=row["title"],
             doi=row["doi"],
@@ -740,6 +767,8 @@ def score_quality(conn) -> dict[str, int]:
             n_authors=row["n_authors"],
             referenced_count=row["referenced_count"],
             cited_by_count=row["cited_by_count"],
+            venue_status=venue_status,
+            work_type_status=work_type_status,
         )
         bands[band] += 1
         conn.execute(

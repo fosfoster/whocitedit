@@ -62,6 +62,16 @@ NOTE_TEMPLATES = {
         "weakens": "The source record carries no title.",
         "supports": "A title is present.",
     },
+    "venue_source": {
+        "weakens": "OpenAlex and Crossref disagree about this work's venue. Both are shown as parallel observations; neither is corrected here.",
+        "supports": "Crossref's venue assertion agrees with OpenAlex's.",
+        "neutral": "No comparable Crossref venue assertion is available.",
+    },
+    "work_type_source": {
+        "weakens": "OpenAlex and Crossref disagree about this work's type. Both are shown as parallel observations; neither is corrected here.",
+        "supports": "Crossref's work-type assertion agrees with OpenAlex's.",
+        "neutral": "No comparable Crossref work-type assertion is available.",
+    },
 }
 
 BAND_SENTENCES = {
@@ -87,6 +97,8 @@ def assess(
     n_authors: int,
     referenced_count: int,
     cited_by_count: int,
+    venue_status: str | None = None,
+    work_type_status: str | None = None,
 ) -> tuple[str, list[dict]]:
     evidence: list[dict] = []
 
@@ -129,6 +141,15 @@ def assess(
             "direction": "weakens" if missing_title else "supports",
         }
     )
+
+    # Only an explicit cross-source disagreement counts against the record.
+    # `unavailable` (no comparable Crossref assertion) and `incomparable`
+    # (an unmapped Crossref type) get the same neutral treatment `doi_year`
+    # gives a missing year, so a corpus with no Crossref harvest yet scores
+    # exactly as it did before these signals existed.
+    for signal, status in (("venue_source", venue_status), ("work_type_source", work_type_status)):
+        direction = "supports" if status == "agree" else "weakens" if status == "disagree" else "neutral"
+        evidence.append({"signal": signal, "value": status, "direction": direction})
 
     weakened = sum(1 for e in evidence if e["direction"] == "weakens")
     band = COMPLETE if weakened == 0 else PARTIAL if weakened == 1 else SUSPECT
