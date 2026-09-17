@@ -50,6 +50,71 @@ def main() -> int:
         "a citation-count signal appeared; the corpus is selected on that axis",
     )
 
+    # source_verdict(): the fold from two Crossref/Europe-PMC statuses to one
+    # three-way verdict that distinguishes which source, if either, disagrees.
+    bad += check(Q.source_verdict("agree", "agree") == Q.AGREE, "three-way agreement was not AGREE")
+    bad += check(Q.source_verdict("agree", None) == Q.AGREE, "crossref-only agreement was not AGREE")
+    bad += check(Q.source_verdict(None, "agree") == Q.AGREE, "europepmc-only agreement was not AGREE")
+    bad += check(Q.source_verdict("disagree", "agree") == Q.CROSSREF_DISAGREES,
+                 "a lone Crossref disagreement was not CROSSREF_DISAGREES")
+    bad += check(Q.source_verdict("agree", "disagree") == Q.EUROPEPMC_DISAGREES,
+                 "a lone Europe PMC disagreement was not EUROPEPMC_DISAGREES")
+    bad += check(Q.source_verdict("disagree", "disagree") == Q.BOTH_DISAGREE,
+                 "two disagreeing sources was not BOTH_DISAGREE")
+    bad += check(Q.source_verdict(None, None) == Q.UNAVAILABLE, "no comparable status was not UNAVAILABLE")
+    bad += check(Q.source_verdict("unavailable", "incomparable") == Q.UNAVAILABLE,
+                 "unavailable/incomparable statuses were not UNAVAILABLE")
+
+    # A three-way agreement on venue/title/date stays COMPLETE.
+    three_way_agree = Q.assess(
+        **GOOD,
+        venue_status="agree", venue_europepmc_status="agree",
+        title_status="agree", title_europepmc_status="agree",
+        date_status="agree", date_europepmc_status="agree",
+    )
+    bad += check(three_way_agree[0] == Q.COMPLETE, "three-way source agreement was not COMPLETE")
+    for signal in ("venue_source", "title_source", "date_source"):
+        entry = next(e for e in three_way_agree[1] if e["signal"] == signal)
+        bad += check(entry["verdict"] == Q.AGREE, f"{signal} three-way agreement did not report AGREE")
+        bad += check(entry["direction"] == "supports", f"{signal} three-way agreement did not support")
+
+    # A Europe-PMC-only disagreement on venue weakens the band and is
+    # distinguishable from a Crossref-only disagreement on the same field.
+    epmc_only = Q.assess(**GOOD, venue_status="agree", venue_europepmc_status="disagree")
+    bad += check(epmc_only[0] == Q.PARTIAL, "a Europe-PMC-only venue disagreement did not weaken the band")
+    epmc_entry = next(e for e in epmc_only[1] if e["signal"] == "venue_source")
+    bad += check(epmc_entry["verdict"] == Q.EUROPEPMC_DISAGREES,
+                 "a Europe-PMC-only venue disagreement did not report europepmc_disagrees")
+    bad += check(epmc_entry["direction"] == "weakens", "a Europe-PMC-only venue disagreement did not weaken")
+
+    crossref_only = Q.assess(**GOOD, venue_status="disagree", venue_europepmc_status="agree")
+    bad += check(crossref_only[0] == Q.PARTIAL, "a Crossref-only venue disagreement did not weaken the band")
+    crossref_entry = next(e for e in crossref_only[1] if e["signal"] == "venue_source")
+    bad += check(crossref_entry["verdict"] == Q.CROSSREF_DISAGREES,
+                 "a Crossref-only venue disagreement did not report crossref_disagrees")
+    bad += check(crossref_entry["verdict"] != epmc_entry["verdict"],
+                 "a Crossref-only and Europe-PMC-only disagreement reported the same verdict")
+
+    both_disagree = Q.assess(**GOOD, venue_status="disagree", venue_europepmc_status="disagree")
+    bad += check(both_disagree[0] == Q.PARTIAL, "two disagreeing sources on one field did not weaken the band")
+    both_entry = next(e for e in both_disagree[1] if e["signal"] == "venue_source")
+    bad += check(both_entry["verdict"] == Q.BOTH_DISAGREE,
+                 "two disagreeing venue sources did not report both_disagree")
+
+    # Title and date behave the same way as venue.
+    for signal, status_kw, epmc_kw in (
+        ("title_source", "title_status", "title_europepmc_status"),
+        ("date_source", "date_status", "date_europepmc_status"),
+    ):
+        epmc_case = Q.assess(**GOOD, **{status_kw: "agree", epmc_kw: "disagree"})
+        bad += check(epmc_case[0] == Q.PARTIAL, f"a Europe-PMC-only {signal} disagreement did not weaken the band")
+        entry = next(e for e in epmc_case[1] if e["signal"] == signal)
+        bad += check(entry["verdict"] == Q.EUROPEPMC_DISAGREES, f"{signal} did not report europepmc_disagrees")
+
+        crossref_case = Q.assess(**GOOD, **{status_kw: "disagree", epmc_kw: "agree"})
+        entry = next(e for e in crossref_case[1] if e["signal"] == signal)
+        bad += check(entry["verdict"] == Q.CROSSREF_DISAGREES, f"{signal} did not report crossref_disagrees")
+
     # A year apart is ordinary -- online-first in December, issue in January.
     near = Q.assess(**{**GOOD, "doi": "https://doi.org/10.1023/proc.2002.4", "year": 2001})
     bad += check(near[0] == Q.COMPLETE, f"a one-year DOI gap was flagged: {near[0]}")
@@ -68,9 +133,30 @@ def main() -> int:
     bad += check(sub[0] == Q.PARTIAL, "the substituted title masked the gap it stands in for")
 
     # Every direction a signal can emit needs a template, or the page renders a
-    # raw value at a reader.
+    # raw value at a reader. This includes every three-way verdict a
+    # title/date/venue signal can fold to (agree, crossref_disagrees,
+    # europepmc_disagrees, both_disagree, unavailable) and the plain two-way
+    # work_type_status.
     seen: dict[str, set] = {}
-    for case in (GOOD, BAD_1, BAD_2, {**GOOD, "doi": None}, sub and {**GOOD, "title": ""}):
+    cases = (
+        GOOD, BAD_1, BAD_2, {**GOOD, "doi": None}, sub and {**GOOD, "title": ""},
+        {**GOOD, "work_type_status": "agree"},
+        {**GOOD, "work_type_status": "disagree"},
+        {**GOOD, "work_type_status": "unavailable"},
+        {**GOOD, "venue_status": "agree", "venue_europepmc_status": "agree"},
+        {**GOOD, "venue_status": "disagree", "venue_europepmc_status": "agree"},
+        {**GOOD, "venue_status": "agree", "venue_europepmc_status": "disagree"},
+        {**GOOD, "venue_status": "disagree", "venue_europepmc_status": "disagree"},
+        {**GOOD, "title_status": "agree", "title_europepmc_status": "agree"},
+        {**GOOD, "title_status": "disagree", "title_europepmc_status": "agree"},
+        {**GOOD, "title_status": "agree", "title_europepmc_status": "disagree"},
+        {**GOOD, "title_status": "disagree", "title_europepmc_status": "disagree"},
+        {**GOOD, "date_status": "agree", "date_europepmc_status": "agree"},
+        {**GOOD, "date_status": "disagree", "date_europepmc_status": "agree"},
+        {**GOOD, "date_status": "agree", "date_europepmc_status": "disagree"},
+        {**GOOD, "date_status": "disagree", "date_europepmc_status": "disagree"},
+    )
+    for case in cases:
         for item in Q.assess(**case)[1]:
             seen.setdefault(item["signal"], set()).add(item["direction"])
     for signal, directions in seen.items():
