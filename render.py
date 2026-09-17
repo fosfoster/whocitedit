@@ -37,6 +37,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import corpus_contract
+from opencitations import normalize_doi
 
 ROOT = Path(__file__).parent
 DATA = ROOT / "web" / "data"
@@ -218,6 +219,54 @@ def work_bibtex(w: dict) -> str:
     rendered = [f"  {name} = {{{bibtex_escape(value)}}}" for name, value in fields if value]
     body = ",\n".join(rendered)
     return f"@misc{{{w['id']},\n" + (f"{body}\n" if body else "") + "}\n"
+
+
+def _csl_issued(w: dict) -> dict | None:
+    """CSL ``date-parts`` from a full publication date, or the bare year."""
+    date = w.get("date")
+    if date:
+        try:
+            parts = [int(p) for p in str(date).split("-")]
+        except ValueError:
+            parts = []
+        if len(parts) >= 2:
+            return {"date-parts": [parts]}
+    year = w.get("year")
+    if year:
+        return {"date-parts": [[year]]}
+    return None
+
+
+def _csl_doi(value) -> str | None:
+    """A bare DOI for CSL's ``DOI`` field, or ``None`` if there is none to derive."""
+    if not value:
+        return None
+    try:
+        return normalize_doi(value)
+    except ValueError:
+        return None
+
+
+def work_csl_json(w: dict) -> dict:
+    """CSL-JSON item for a work, omitting any field missing from the source."""
+    item: dict = {"id": w["id"]}
+    if w.get("title"):
+        item["title"] = w["title"]
+    if w.get("type"):
+        item["type"] = w["type"]
+    authors = [{"literal": a["name"]} for a in w.get("authors") or [] if a.get("name")]
+    if authors:
+        item["author"] = authors
+    issued = _csl_issued(w)
+    if issued:
+        item["issued"] = issued
+    container_title = (w.get("source") or {}).get("name")
+    if container_title:
+        item["container-title"] = container_title
+    doi = _csl_doi(w.get("doi"))
+    if doi:
+        item["DOI"] = doi
+    return item
 
 
 def ris_value(value) -> str:
