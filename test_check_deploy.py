@@ -25,8 +25,8 @@ def html(page_title, body=""):
     return f"<!doctype html><html><head><title>{page_title}</title></head><body>{body}</body></html>".encode()
 
 
-def sitemap(routes):
-    locations = "".join(f"<url><loc>{BASE_URL}{route}</loc></url>" for route in routes)
+def sitemap(routes, origin=BASE_URL):
+    locations = "".join(f"<url><loc>{origin}{route}</loc></url>" for route in routes)
     return f'<?xml version="1.0"?><urlset>{locations}</urlset>'.encode()
 
 
@@ -140,6 +140,35 @@ def test_detail_html_content_drift():
     return 1 if bad else 0
 
 
+def test_sitemap_route_set_parity():
+    bad = 0
+    local_routes = ("/", "/methodology/") + ROUTES
+    with offline_fixture() as (site, _, bundle, responses):
+        reordered = dict(responses)
+        reordered["/sitemap.xml"] = sitemap(tuple(reversed(local_routes)), origin="https://other.example")
+        bad += check(reordered["/sitemap.xml"] != responses["/sitemap.xml"],
+                     "reordered sitemap fixture is byte-identical to the local sitemap")
+        code, output, _ = run_case(site, bundle, reordered)
+        row = next((line for line in output.splitlines() if line.startswith("Sitemap route set")), "")
+        bad += check(code == 0 and "PASS" in row and f"{len(local_routes)} routes match" in row,
+                     "reordered sitemap with a different origin did not pass as an equal route set")
+
+        substituted_routes = local_routes[:-1] + ("/t/T2/",)
+        substituted = dict(responses)
+        substituted["/sitemap.xml"] = sitemap(substituted_routes)
+        bad += check(
+            len(check_deploy.sitemap_routes(substituted["/sitemap.xml"])) == len(local_routes),
+            "route substitution fixture changed the sitemap entry count",
+        )
+        code, output, _ = run_case(site, bundle, substituted)
+        row = next((line for line in output.splitlines() if line.startswith("Sitemap route set")), "")
+        bad += check(
+            code == 1 and "FAIL" in row and "local-only /t/T1/" in row and "remote-only /t/T2/" in row,
+            "same-count route substitution did not fail with both differences in the sitemap row",
+        )
+    return 1 if bad else 0
+
+
 def main():
     bad = 0
     with offline_fixture() as (site, pages, bundle, responses):
@@ -173,7 +202,7 @@ def main():
         stale_sitemap = dict(responses)
         stale_sitemap["/sitemap.xml"] = sitemap(("/", "/methodology/") + ROUTES[:-1])
         code, output, _ = run_case(site, bundle, stale_sitemap)
-        bad += check(code == 1 and "Sitemap URL count" in output and "FAIL" in output,
+        bad += check(code == 1 and "Sitemap route set" in output and "FAIL" in output,
                      "stale sitemap did not return 1 with a failing sitemap row")
 
         changed_author_html = dict(responses)
@@ -213,6 +242,7 @@ def main():
 
     bad += test_shared_html_content_drift()
     bad += test_detail_html_content_drift()
+    bad += test_sitemap_route_set_parity()
 
     print("test_check_deploy:", "FAILED" if bad else "ok")
     return 1 if bad else 0
