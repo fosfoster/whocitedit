@@ -14,7 +14,15 @@
         "doi": "10.5555/source-paper",
         "title": "A fixture Europe PMC source paper",
         "authorString": "Example A, Example B.",
+        "journalInfo": {
+          "journal": {
+            "title": "Journal of Fixtures",
+            "medlineAbbreviation": "J Fixtures"
+          },
+          "printPublicationDate": "2024-03-01"
+        },
         "journalTitle": "Journal of Fixtures",
+        "firstPublicationDate": "2024-01-15",
         "pubYear": "2024",
         "citedByCount": 2,
         "hasReferences": "Y"

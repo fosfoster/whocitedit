@@ -37,6 +37,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import corpus_contract
+from opencitations import normalize_doi
 
 ROOT = Path(__file__).parent
 DATA = ROOT / "web" / "data"
@@ -220,6 +221,54 @@ def work_bibtex(w: dict) -> str:
     return f"@misc{{{w['id']},\n" + (f"{body}\n" if body else "") + "}\n"
 
 
+def _csl_issued(w: dict) -> dict | None:
+    """CSL ``date-parts`` from a full publication date, or the bare year."""
+    date = w.get("date")
+    if date:
+        try:
+            parts = [int(p) for p in str(date).split("-")]
+        except ValueError:
+            parts = []
+        if len(parts) >= 2:
+            return {"date-parts": [parts]}
+    year = w.get("year")
+    if year:
+        return {"date-parts": [[year]]}
+    return None
+
+
+def _csl_doi(value) -> str | None:
+    """A bare DOI for CSL's ``DOI`` field, or ``None`` if there is none to derive."""
+    if not value:
+        return None
+    try:
+        return normalize_doi(value)
+    except ValueError:
+        return None
+
+
+def work_csl_json(w: dict) -> dict:
+    """CSL-JSON item for a work, omitting any field missing from the source."""
+    item: dict = {"id": w["id"]}
+    if w.get("title"):
+        item["title"] = w["title"]
+    if w.get("type"):
+        item["type"] = w["type"]
+    authors = [{"literal": a["name"]} for a in w.get("authors") or [] if a.get("name")]
+    if authors:
+        item["author"] = authors
+    issued = _csl_issued(w)
+    if issued:
+        item["issued"] = issued
+    container_title = (w.get("source") or {}).get("name")
+    if container_title:
+        item["container-title"] = container_title
+    doi = _csl_doi(w.get("doi"))
+    if doi:
+        item["DOI"] = doi
+    return item
+
+
 def ris_value(value) -> str:
     """Keep a value on one RIS line, so it cannot introduce another tag."""
     return str(value).replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
@@ -243,6 +292,17 @@ def render_ris(w: dict) -> str:
     add("DO", w.get("doi"))
     fields.append(("ER", ""))
     return "".join(f"{tag}  - {value}\n" for tag, value in fields)
+
+
+def render_csl_json(w: dict) -> str:
+    """A one-item CSL-JSON array with only the fields populated so far.
+
+    ensure_ascii=False keeps non-Latin titles as literal UTF-8 rather than
+    \\uXXXX escapes; sort_keys plus a fixed key order keep two renders of the
+    same work byte-identical.
+    """
+    record = {"id": w["id"], "title": w.get("title")}
+    return json.dumps([record], ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
 
 
@@ -554,37 +614,48 @@ def evidence_html(evidence: list[dict], notes: dict) -> str:
     return f'<ul class="evidence">{"".join(rows)}</ul>'
 
 
-def valid_source_url(value) -> bool:
-    """True only for an absolute http(s) URL, as exported for a stored payload's source.
+def valid_source_url(url) -> bool:
+    """True only for an absolute http(s) URL a reader could paste and follow.
 
-    A payload's `url` is copied from the harvest manifest without inspection, and
-    synthetic corpora record `file://` sources, so before a page links a reader
-    to where a record came from the value has to be a link a browser can
-    follow: a scheme of http or https, a host, and nothing a URL cannot carry
-    raw. Everything else -- a relative path, another scheme, whitespace, a
-    missing value -- is false rather than a guess.
+    Whitespace is rejected as well as the obvious failures, and not for
+    tidiness: a browser strips tabs and newlines out of an href before
+    resolving it, so a URL carrying one is not the URL the page displays.
     """
-    if not isinstance(value, str) or not value:
-        return False
-    if any(char.isspace() or not char.isprintable() for char in value):
+    if not isinstance(url, str) or not url or any(c.isspace() for c in url):
         return False
     try:
-        parts = urlsplit(value)
-        parts.port  # raises for a non-numeric or out-of-range port
-    except ValueError:
+        parsed = urlsplit(url)
+        _port = parsed.port  # raises on a malformed port
+    except ValueError:  # an unparseable authority, e.g. a truncated IPv6 literal
         return False
-    return parts.scheme in ("http", "https") and bool(parts.hostname)
+    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
 
 
-def source_url_html(url) -> str:
-    """Where a payload was fetched from, linked only when a browser could follow it.
+def payload_source_link(sha: str, url) -> str:
+    """The payload hash, linked to the URL those bytes were fetched from.
 
-    A value that fails validation is still shown, as text: hiding it would make
-    a bad manifest entry look like a missing one, and linking it would send a
-    reader somewhere this site never checked. An absent value says so.
+    The hash is the anchor text and not the URL itself because a harvested URL
+    here is a 900-character OR-filter over 50 ids; the methodology page is where
+    source URLs are read, and this is where they are followed.
+
+    Escaping is the whole of the safety: `e` turns `"`, `<`, `>` and `&` into
+    character references, so the href ends at the quote this renderer wrote
+    rather than at one inside the data, and an HTML parser hands the stored URL
+    back character for character. A URL that fails validation is not linked at
+    all -- an anchor a reader cannot follow claims a check this site never made.
     """
-    if valid_source_url(url):
-        return f'<span class="source">source <a href="{e(url)}">{e(url)}</a></span>'
+    if not valid_source_url(url):
+        return f'<span class="mono">sha256 {e(sha)}</span>'
+    return f'<a class="mono" href="{e(url)}">sha256 {e(sha)}</a>'
+
+
+def rejected_source_note(url) -> str:
+    """Text noting a source URL that failed validation, beside the plain hash.
+
+    Only shown when `payload_source_link` declined to link the hash: an absent
+    or blank value says so plainly, and a present-but-invalid value is echoed
+    as text so a bad manifest entry is still visible, never silently dropped.
+    """
     if url is None or (isinstance(url, str) and not url.strip()):
         return '<span class="source faint">source URL not recorded</span>'
     return f'<span class="source faint">source {e(url)}</span>'
@@ -598,11 +669,12 @@ def provenance_html(raw, payloads: dict) -> str:
     rows = []
     for sha in hashes:
         payload = payloads.get(sha) or {}
+        url = payload.get("url")
         fetched = payload.get("fetched_at", "unknown")
+        note = "" if valid_source_url(url) else f" {rejected_source_note(url)}"
         rows.append(
-            f'<li><span class="mono">sha256 {e(sha)}</span> '
-            f'<span class="faint">fetched {e(fetched)}</span> '
-            f'{source_url_html(payload.get("url"))}</li>'
+            f'<li>{payload_source_link(sha, url)} '
+            f'<span class="faint">fetched {e(fetched)}</span>{note}</li>'
         )
     return '<ul class="evidence provenance-list">' + "".join(rows) + "</ul>"
 
@@ -623,6 +695,46 @@ def crossref_comparison_html(comparison: dict | None) -> str:
     <h2>Crossref comparison</h2>
     <p class="meta">How this work's OpenAlex venue and type compare against a Crossref assertion.</p>
     <ul class="evidence">{rows}</ul>
+  </div>
+"""
+
+
+SOURCE_LABELS = {"openalex": "OpenAlex", "crossref": "Crossref"}
+
+
+def record_comparison_html(comparison: dict | None, payloads: dict) -> str:
+    """Both sources' title and date, each labelled, with the verdict beside them.
+
+    The OpenAlex record above this panel is unchanged by anything here: a
+    disagreement is shown, not resolved.
+    """
+    if not comparison:
+        return ""
+    sections = []
+    for key, label in (("title", "Title"), ("date", "Publication date")):
+        field = comparison[key]
+        status = field["status"]
+        precision = field.get("precision")
+        scope = f' <span class="faint">compared to the {e(precision)}</span>' if precision else ""
+        rows = []
+        for source in ("openalex", "crossref"):
+            assertion = field[source]
+            value = e(assertion["value"]) if assertion["value"] else '<span class="faint">not asserted</span>'
+            fetched = payloads.get(assertion["raw"], {}).get("fetched_at", "unknown")
+            rows.append(
+                f'<li><b>{e(SOURCE_LABELS.get(source, source))}</b>: {value} '
+                f'<span class="mono faint">sha256 {e(assertion["raw"])} &middot; fetched {e(fetched)}</span></li>'
+            )
+        sections.append(
+            f'<li><span class="badge {e(status)}">{e(status)}</span> <span>{label}</span>{scope}'
+            f'<ul class="evidence">{"".join(rows)}</ul></li>'
+        )
+    role = comparison["role"]
+    return f"""
+  <div class="panel">
+    <h2>Title and date across sources</h2>
+    <p class="meta">{e(role[:1].upper() + role[1:])}. The record above stays as OpenAlex published it.</p>
+    <ul class="evidence">{"".join(sections)}</ul>
   </div>
 """
 
@@ -902,6 +1014,7 @@ def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
     {provenance_html(w.get("raw"), payloads)}
   </div>
   {crossref_comparison_html(w.get("crossref_comparison"))}
+  {record_comparison_html(w.get("record_comparison"), payloads)}
 </div>
 </div>
 """
@@ -1610,6 +1723,7 @@ def main() -> int:
             )
             total += write(f"w/{wid}/citation.bib", work_bibtex(w))
             total += write(f"w/{wid}/citation.ris", render_ris(w))
+            total += write(f"w/{wid}/citation.csl.json", render_csl_json(w))
             n += 1
 
     for shard in sorted((DATA / "authors").glob("*.json")):

@@ -15,9 +15,11 @@ the pages say so.
 """
 from __future__ import annotations
 
+import html
 import json
 import re
 import sys
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -208,6 +210,9 @@ def load(conn) -> dict:
     return stats
 
 
+NO_TITLE_PREFIX = "[No title in the source record"
+
+
 def _title(w: dict) -> str:
     """Never the bare word "Untitled".
 
@@ -221,7 +226,7 @@ def _title(w: dict) -> str:
         return title
     src = ((w.get("primary_location") or {}).get("source") or {}).get("display_name")
     hint = src or (w.get("doi") or "").replace("https://doi.org/", "") or short_id(w["id"])
-    return f"[No title in the source record — {hint}]"
+    return f"{NO_TITLE_PREFIX} — {hint}]"
 
 
 def _insert_institution(conn, inst: dict, raw_sha: str | None) -> str | None:
@@ -451,12 +456,53 @@ def _first(values) -> str | None:
     return values[0] if isinstance(values, list) and values else None
 
 
+def _crossref_title(message: dict) -> str | None:
+    """Crossref's first title as plain text.
+
+    Crossref titles carry inline JATS/HTML markup (`<i>`, `<sub>`) and entities.
+    Strip those and nothing else: the stored value is what Crossref asserted,
+    and `normalize_title` below is the only place comparison folding happens.
+    """
+    title = _first(message.get("title"))
+    if not isinstance(title, str):
+        return None
+    text = html.unescape(re.sub(r"<[^>]*>", "", title))
+    text = " ".join(text.split())
+    return text or None
+
+
+# Crossref's `issued` is its own earliest-known publication date. The rest are
+# fallbacks in a fixed order so the stored assertion does not depend on which
+# keys a given record happens to carry.
+CROSSREF_DATE_KEYS = ("issued", "published", "published-online", "published-print")
+
+
+def _crossref_date(message: dict) -> str | None:
+    """A date at exactly the precision Crossref supplied, never padded."""
+    for key in CROSSREF_DATE_KEYS:
+        block = message.get(key)
+        parts = _first(block.get("date-parts")) if isinstance(block, dict) else None
+        if not isinstance(parts, list):
+            continue
+        fields = []
+        for part in parts[:3]:
+            if isinstance(part, bool) or not isinstance(part, int):
+                break
+            fields.append(part)
+        if not fields:
+            continue
+        return "-".join([f"{fields[0]:04d}"] + [f"{p:02d}" for p in fields[1:]])
+    return None
+
+
 def _insert_crossref_assertions(conn, envelopes: list[tuple[str, dict]]) -> int:
     """Join stored Crossref work envelopes to the corpus by normalized DOI.
 
     Runs after every OpenAlex work is in place, so a Crossref payload whose
     DOI is not (yet, or ever) in the corpus is simply dropped rather than
-    stored dangling.
+    stored dangling. Only the columns named here are retained: a Crossref
+    abstract, author list, reference list or citation count never reaches
+    the database, so it can never reach a page either.
     """
     doi_to_work: dict[str, str] = {}
     for row in conn.execute("SELECT id, doi FROM work"):
@@ -470,19 +516,65 @@ def _insert_crossref_assertions(conn, envelopes: list[tuple[str, dict]]) -> int:
         if not wid:
             continue
         conn.execute(
-            "INSERT INTO crossref_work_assertion(work_id, raw_sha, venue, venue_short, work_type) "
-            "VALUES(?,?,?,?,?) ON CONFLICT(work_id, raw_sha) DO UPDATE SET "
-            "venue=excluded.venue, venue_short=excluded.venue_short, work_type=excluded.work_type",
+            "INSERT INTO crossref_work_assertion("
+            "  work_id, raw_sha, venue, venue_short, work_type, title, published) "
+            "VALUES(?,?,?,?,?,?,?) ON CONFLICT(work_id, raw_sha) DO UPDATE SET "
+            "venue=excluded.venue, venue_short=excluded.venue_short, work_type=excluded.work_type, "
+            "title=excluded.title, published=excluded.published",
             (
                 wid,
                 raw_sha,
                 _first(message.get("container-title")),
                 _first(message.get("short-container-title")),
                 message.get("type"),
+                _crossref_title(message),
+                _crossref_date(message),
             ),
         )
         count += 1
     return count
+
+
+def normalize_title(value: str) -> str:
+    """Comparison-only folding: accents, case, punctuation and spacing.
+
+    Never stored and never rendered. Two sources that differ by a trailing
+    full stop or an italicised species name are not disagreeing about what
+    the paper is called.
+    """
+    folded = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", folded.casefold()).split())
+
+
+def title_comparison_status(openalex_title: str | None, crossref_title: str | None) -> str:
+    # The OpenAlex placeholder for a missing title is ours, not the source's:
+    # comparing it would report a disagreement OpenAlex never asserted.
+    if not openalex_title or openalex_title.startswith(NO_TITLE_PREFIX) or not crossref_title:
+        return "unavailable"
+    return "agree" if normalize_title(openalex_title) == normalize_title(crossref_title) else "disagree"
+
+
+DATE_PRECISION = ("year", "month", "day")
+
+
+def _date_parts(value: str | None) -> tuple[int, ...]:
+    if not isinstance(value, str) or not re.fullmatch(r"\d{4}(-\d{2}){0,2}", value.strip()):
+        return ()
+    return tuple(int(p) for p in value.strip().split("-"))
+
+
+def date_comparison(openalex_date: str | None, crossref_date: str | None) -> tuple[str, str | None]:
+    """Compare two dates only as far as both sources actually went.
+
+    Returns (status, precision). A year-only Crossref date against a full
+    OpenAlex date is compared on the year alone and says so; it is never
+    expanded to a month and day nobody asserted.
+    """
+    a, b = _date_parts(openalex_date), _date_parts(crossref_date)
+    depth = min(len(a), len(b))
+    if depth == 0:
+        return "unavailable", None
+    return ("agree" if a[:depth] == b[:depth] else "disagree"), DATE_PRECISION[depth - 1]
 
 
 def _normalize_venue(value: str) -> str:
@@ -494,6 +586,43 @@ def _normalize_venue(value: str) -> str:
     """
     value = re.sub(r"^the\b\s*", "", value.strip().casefold())
     return re.sub(r"[^a-z0-9]", "", value)
+
+
+def _dict_get(value, key):
+    return value.get(key) if isinstance(value, dict) else None
+
+
+def europepmc_work_fields(result: dict) -> dict:
+    """Extract title, venue and date fields from one Europe PMC result.
+
+    Tolerates a missing or non-dict `journalInfo` (or `journalInfo.journal`)
+    rather than raising, since a harvested payload may carry either the
+    `resultType=core` or the older "lite" shape.
+    """
+    journal_info = _dict_get(result, "journalInfo")
+    journal = _dict_get(journal_info, "journal")
+
+    title = result.get("title")
+    title = title.strip() if isinstance(title, str) else None
+
+    venue = _dict_get(journal, "title") or result.get("journalTitle")
+    venue_short = _dict_get(journal, "medlineAbbreviation") or _dict_get(journal, "isoabbreviation")
+
+    publication_date = (
+        result.get("firstPublicationDate")
+        or _dict_get(journal_info, "printPublicationDate")
+    )
+    if not publication_date:
+        pub_year = result.get("pubYear")
+        publication_date = str(pub_year) if pub_year else None
+
+    return {
+        "doi": result.get("doi"),
+        "title": title or None,
+        "venue": venue,
+        "venue_short": venue_short,
+        "publication_date": publication_date,
+    }
 
 
 def venue_comparison_status(
