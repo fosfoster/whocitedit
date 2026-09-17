@@ -617,18 +617,25 @@ def evidence_html(evidence: list[dict], notes: dict) -> str:
 def valid_source_url(url) -> bool:
     """True only for an absolute http(s) URL a reader could paste and follow.
 
-    Whitespace is rejected as well as the obvious failures, and not for
-    tidiness: a browser strips tabs and newlines out of an href before
-    resolving it, so a URL carrying one is not the URL the page displays.
+    Whitespace and the other control characters are rejected as well as the
+    obvious failures, and not for tidiness: a browser strips tabs and newlines
+    out of an href before resolving it and escapes what is left, so a URL
+    carrying one is not the URL the page displays.
+
+    The authority has to resolve to a host and not merely be non-empty --
+    `https://@/works/W1` and `https://:8443/works/W1` both have one, and neither
+    names anything to fetch from.
     """
-    if not isinstance(url, str) or not url or any(c.isspace() for c in url):
+    if not isinstance(url, str) or not url:
+        return False
+    if any(c.isspace() or not c.isprintable() for c in url):
         return False
     try:
         parsed = urlsplit(url)
         _port = parsed.port  # raises on a malformed port
     except ValueError:  # an unparseable authority, e.g. a truncated IPv6 literal
         return False
-    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+    return parsed.scheme in ("http", "https") and bool(parsed.hostname)
 
 
 def payload_source_link(sha: str, url) -> str:
