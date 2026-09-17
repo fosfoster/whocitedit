@@ -432,6 +432,57 @@ def write(path: str, content: str) -> int:
 
 # -- graph ----------------------------------------------------------------
 
+def label_boxes(
+    g: dict, *, focus: str = ""
+) -> list[tuple[str, str, tuple[float, float, float, float]]]:
+    """Greedy label placement, largest node first, clamped to the viewBox.
+
+    Returns `(node_id, short_label, box)` for every label kept. `svg_graph` is
+    the only caller; pulled out as a public helper so the placement geometry
+    can be tested without re-parsing SVG.
+    """
+    nodes_data = [
+        {
+            **n,
+            "label": n.get("label") or n.get("name") or n["id"],
+            "kind": n.get("kind") or ("focus" if n["id"] == focus else "coauthor"),
+        }
+        for n in (g.get("nodes") or [])
+    ]
+    maxc = max((n.get("cited") or n.get("works") or 1) for n in nodes_data) or 1
+
+    box_h = 12
+    inset = 4
+    # A graph shorter than a box plus both insets can't fit a clamp with room
+    # to spare; the lower bound wins so the box never inverts.
+    top_lo = inset
+    top_hi = max(top_lo, g["height"] - inset - box_h)
+
+    placed: list[tuple[float, float, float, float]] = []
+    ordered = sorted(
+        nodes_data,
+        key=lambda n: (n["kind"] != "focus", -(n.get("cited") or n.get("works") or 0)),
+    )
+    out: list[tuple[str, str, tuple[float, float, float, float]]] = []
+    for n in ordered:
+        label = n["label"]
+        short = label if len(label) <= 30 else label[:29] + "…"
+        scale = (n.get("cited") or n.get("works") or 1) / maxc
+        r = 11 if n["kind"] == "focus" else 5 + 11 * math.sqrt(max(scale, 0.0))
+        half = len(short) * 2.7
+        for dy in (-r - 5, r + 11):
+            top = min(max(n["y"] + dy - 9, top_lo), top_hi)
+            box = (n["x"] - half, top, n["x"] + half, top + box_h)
+            if not any(
+                box[0] < q[2] and q[0] < box[2] and box[1] < q[3] and q[1] < box[3]
+                for q in placed
+            ):
+                placed.append(box)
+                out.append((n["id"], short, box))
+                break
+    return out
+
+
 def svg_graph(g: dict, href: dict[str, str], caption: str,
               *, kind: str = "citation", focus: str = "",
               href_prefix: str = "../") -> str:
@@ -475,28 +526,10 @@ def svg_graph(g: dict, href: dict[str, str], caption: str,
     # and the label can sit above or below the node. Every node keeps its full
     # title in a <title> element, so the information is still there on hover and
     # still in the markup a crawler reads.
-    placed: list[tuple[float, float, float, float]] = []
-    ordered = sorted(
-        nodes_data,
-        key=lambda n: (n["kind"] != "focus", -(n.get("cited") or n.get("works") or 0)),
-    )
-    labels: dict[str, tuple[float, str]] = {}
-    for n in ordered:
-        label = n["label"]
-        short = label if len(label) <= 30 else label[:29] + "\u2026"
-        scale = (n.get("cited") or n.get("works") or 1) / maxc
-        r = 11 if n["kind"] == "focus" else 5 + 11 * math.sqrt(max(scale, 0.0))
-        half = len(short) * 2.7
-        for dy in (-r - 5, r + 11):
-            top = n["y"] + dy - 9
-            box = (n["x"] - half, top, n["x"] + half, top + 12)
-            if not any(
-                box[0] < q[2] and q[0] < box[2] and box[1] < q[3] and q[1] < box[3]
-                for q in placed
-            ):
-                placed.append(box)
-                labels[n["id"]] = (n["y"] + dy, short)
-                break
+    labels: dict[str, tuple[float, str]] = {
+        node_id: (box[1] + 9, short)
+        for node_id, short, box in label_boxes(g, focus=focus)
+    }
 
     nodes = []
     for n in nodes_data:
