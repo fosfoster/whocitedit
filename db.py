@@ -178,9 +178,12 @@ CREATE TABLE IF NOT EXISTS work_topic (
 );
 
 -- One row per directed citation, both ends inside the corpus. `sources` is a
--- JSON array of the indexes that assert this edge; an edge asserted by two
--- independent indexes is stronger evidence than one asserted by OpenAlex alone,
--- and the reader is shown which.
+-- JSON array of the indexes that assert this edge, drawn from openalex,
+-- opencitations, europepmc and crossref; an edge asserted by two independent
+-- indexes is stronger evidence than one asserted by OpenAlex alone, and the
+-- reader is shown which. The column is unconstrained TEXT with
+-- DEFAULT '["openalex"]' — no CHECK constraint and no lookup table — so a new
+-- source name needs no migration, only a derive.py change that unions it in.
 CREATE TABLE IF NOT EXISTS citation (
   citing_id TEXT NOT NULL REFERENCES work(id),
   cited_id  TEXT NOT NULL REFERENCES work(id),
