@@ -685,6 +685,46 @@ def crossref_comparison_html(comparison: dict | None) -> str:
 """
 
 
+SOURCE_LABELS = {"openalex": "OpenAlex", "crossref": "Crossref"}
+
+
+def record_comparison_html(comparison: dict | None, payloads: dict) -> str:
+    """Both sources' title and date, each labelled, with the verdict beside them.
+
+    The OpenAlex record above this panel is unchanged by anything here: a
+    disagreement is shown, not resolved.
+    """
+    if not comparison:
+        return ""
+    sections = []
+    for key, label in (("title", "Title"), ("date", "Publication date")):
+        field = comparison[key]
+        status = field["status"]
+        precision = field.get("precision")
+        scope = f' <span class="faint">compared to the {e(precision)}</span>' if precision else ""
+        rows = []
+        for source in ("openalex", "crossref"):
+            assertion = field[source]
+            value = e(assertion["value"]) if assertion["value"] else '<span class="faint">not asserted</span>'
+            fetched = payloads.get(assertion["raw"], {}).get("fetched_at", "unknown")
+            rows.append(
+                f'<li><b>{e(SOURCE_LABELS.get(source, source))}</b>: {value} '
+                f'<span class="mono faint">sha256 {e(assertion["raw"])} &middot; fetched {e(fetched)}</span></li>'
+            )
+        sections.append(
+            f'<li><span class="badge {e(status)}">{e(status)}</span> <span>{label}</span>{scope}'
+            f'<ul class="evidence">{"".join(rows)}</ul></li>'
+        )
+    role = comparison["role"]
+    return f"""
+  <div class="panel">
+    <h2>Title and date across sources</h2>
+    <p class="meta">{e(role[:1].upper() + role[1:])}. The record above stays as OpenAlex published it.</p>
+    <ul class="evidence">{"".join(sections)}</ul>
+  </div>
+"""
+
+
 def author_provenance(a: dict, work_raw: dict[str, object]) -> tuple[str | list[str], bool]:
     """Resolve an author's direct payload, or the payloads of its exported works."""
     if a.get("raw"):
@@ -960,6 +1000,7 @@ def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
     {provenance_html(w.get("raw"), payloads)}
   </div>
   {crossref_comparison_html(w.get("crossref_comparison"))}
+  {record_comparison_html(w.get("record_comparison"), payloads)}
 </div>
 </div>
 """
