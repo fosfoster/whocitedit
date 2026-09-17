@@ -77,6 +77,37 @@ RIS_TYPES = {
     "software-paper": "JOUR",
 }
 
+# The same work types mapped onto the CSL-JSON `type` enum. CSL's `article` is
+# its type for preprints and other work outside a publisher venue; a journal
+# item is `article-journal`. OpenAlex's `review` is a review article, not CSL's
+# review-of-something, so it stays a journal article too.
+CSL_TYPES = {
+    "article": "article-journal",
+    "book": "book",
+    "book-chapter": "chapter",
+    "book-review": "review-book",
+    "conference-abstract": "paper-conference",
+    "conference-paper": "paper-conference",
+    "data-paper": "article-journal",
+    "dataset": "dataset",
+    "dissertation": "thesis",
+    "editorial": "article-journal",
+    "erratum": "article-journal",
+    "other": "document",
+    "paratext": "document",
+    "preprint": "article",
+    "reference-entry": "entry",
+    "report": "report",
+    "review": "article-journal",
+    "software": "software",
+    "software-paper": "article-journal",
+}
+CSL_FALLBACK_TYPE = "document"
+
+# Resolver forms the exported `doi` field may carry ahead of the bare identifier.
+DOI_PREFIXES = ("https://doi.org/", "http://doi.org/", "https://dx.doi.org/",
+                "http://dx.doi.org/", "doi:")
+
 
 def e(s) -> str:
     return html.escape(str(s if s is not None else ""), quote=True)
@@ -242,6 +273,52 @@ def render_ris(w: dict) -> str:
     add("DO", w.get("doi"))
     fields.append(("ER", ""))
     return "".join(f"{tag}  - {value}\n" for tag, value in fields)
+
+
+def bare_doi(value) -> str:
+    """The DOI identifier alone, without the resolver URL the export renders."""
+    doi = str(value).strip()
+    for prefix in DOI_PREFIXES:
+        if doi.lower().startswith(prefix):
+            return doi[len(prefix):]
+    return doi
+
+
+def csl_date_parts(date, year) -> list[list[int]] | None:
+    """Numeric CSL date-parts from a full publication date, else the year alone."""
+    if isinstance(date, str):
+        parts = date.split("-")
+        if 1 <= len(parts) <= 3 and all(p.isascii() and p.isdecimal() for p in parts):
+            return [[int(p) for p in parts]]
+    if isinstance(year, int):
+        return [[year]]
+    return None
+
+
+def render_csl_json(w: dict) -> str:
+    """Serialize the bibliographic fields exported for one work as a one-item CSL-JSON array.
+
+    Only fields in the CSL-JSON input schema are used, and absent ones are left
+    out rather than emitted empty. Names are literal: the export does not split
+    them into given and family, so the serializer must not guess.
+    """
+    item = {"id": w["id"], "type": CSL_TYPES.get(w.get("type"), CSL_FALLBACK_TYPE)}
+    if w.get("title"):
+        item["title"] = str(w["title"])
+    authors = [{"literal": str(author["name"])}
+               for author in w.get("authors") or [] if author.get("name")]
+    if authors:
+        item["author"] = authors
+    date_parts = csl_date_parts(w.get("date"), w.get("year"))
+    if date_parts:
+        item["issued"] = {"date-parts": date_parts}
+    source = w.get("source") or {}
+    if source.get("name"):
+        item["container-title"] = str(source["name"])
+    doi = bare_doi(w["doi"]) if w.get("doi") else ""
+    if doi:
+        item["DOI"] = doi
+    return json.dumps([item], ensure_ascii=False, indent=2) + "\n"
 
 
 
@@ -1571,6 +1648,7 @@ def main() -> int:
             )
             total += write(f"w/{wid}/citation.bib", work_bibtex(w))
             total += write(f"w/{wid}/citation.ris", render_ris(w))
+            total += write(f"w/{wid}/citation.csl.json", render_csl_json(w))
             n += 1
 
     for shard in sorted((DATA / "authors").glob("*.json")):
