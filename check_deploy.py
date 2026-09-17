@@ -14,7 +14,8 @@ from xml.etree import ElementTree
 
 ROOT = Path(__file__).parent
 SITE = ROOT / "web" / "site"
-BUNDLE = ROOT / "web" / "assets" / "islands.js"
+ASSETS = ROOT / "web" / "assets"
+READER_ASSETS = ("style.css", "app.js", "islands.js")
 DETAIL_PREFIXES = ("w", "a", "i", "t")
 
 
@@ -110,7 +111,7 @@ def print_table(rows: list[tuple[str, str, str]], stream: TextIO) -> None:
 def check_deploy(
     base_url: str,
     site: Path = SITE,
-    bundle: Path = BUNDLE,
+    assets: Path = ASSETS,
     transport: Transport = stdlib_transport,
     stream: TextIO = sys.stdout,
 ) -> int:
@@ -141,7 +142,9 @@ def check_deploy(
             rows.append((f"HTML SHA-256 /{prefix}/ detail", "SKIP", "no local sitemap sample"))
         else:
             requested.append((route, route))
-    requested.append(("/assets/islands.js", "/assets/islands.js"))
+    for asset_name in READER_ASSETS:
+        asset_route = f"/assets/{asset_name}"
+        requested.append((asset_route, asset_route))
 
     remote: dict[str, Response] = {}
     for label, route in requested:
@@ -208,18 +211,22 @@ def check_deploy(
             rows.append((name, status, f"local {local_hash}; remote {remote_hash}"))
             failures |= status == "FAIL"
 
-    remote_bundle = remote.get("/assets/islands.js")
-    if remote_bundle is None or not 200 <= remote_bundle.status < 300:
-        rows.append(("Bundle SHA-256", "FAIL", "remote bundle unavailable"))
-        failures = True
-    elif not bundle.exists():
-        rows.append(("Bundle SHA-256", "FAIL", f"missing local {bundle}"))
-        failures = True
-    else:
-        matches, local_hash, remote_hash = sha256_comparison(bundle.read_bytes(), remote_bundle.body)
-        status = "PASS" if matches else "FAIL"
-        rows.append(("Bundle SHA-256", status, f"local {local_hash}; remote {remote_hash}"))
-        failures |= status == "FAIL"
+    for asset_name in READER_ASSETS:
+        asset_route = f"/assets/{asset_name}"
+        asset_path = assets / asset_name
+        name = f"Asset SHA-256 {asset_route}"
+        remote_asset = remote.get(asset_route)
+        if remote_asset is None or not 200 <= remote_asset.status < 300:
+            rows.append((name, "FAIL", "remote asset unavailable"))
+            failures = True
+        elif not asset_path.exists():
+            rows.append((name, "FAIL", f"missing local {asset_path}"))
+            failures = True
+        else:
+            matches, local_hash, remote_hash = sha256_comparison(asset_path.read_bytes(), remote_asset.body)
+            status = "PASS" if matches else "FAIL"
+            rows.append((name, status, f"local {local_hash}; remote {remote_hash}"))
+            failures |= status == "FAIL"
 
     exit_code = 2 if unreachable else 1 if failures else 0
     rows.append(("Deployment parity", "PASS" if exit_code == 0 else "FAIL", f"exit {exit_code}"))
