@@ -172,3 +172,32 @@ class Client:
         url = self._url(doi)
         self._throttle()
         return self._store(url, self._fetch(url))
+
+    def references(self, doi: str) -> Fetched:
+        """Fetch and store the same work envelope, for its ``reference`` array."""
+        self._charge(REQUEST_COST)
+        url = self._url(doi)
+        self._throttle()
+        return self._store(url, self._fetch(url))
+
+
+def reference_dois(payload: dict) -> list[str]:
+    """Return the normalized, deduplicated, order-stable DOIs a work asserts.
+
+    Entries with no ``DOI`` key, or a value ``normalize_doi()`` rejects, are
+    skipped.
+    """
+    dois: list[str] = []
+    seen: set[str] = set()
+    for entry in payload.get("message", {}).get("reference", []):
+        raw = entry.get("DOI")
+        if not raw:
+            continue
+        try:
+            doi = normalize_doi(raw)
+        except ValueError:
+            continue
+        if doi not in seen:
+            seen.add(doi)
+            dois.append(doi)
+    return dois
