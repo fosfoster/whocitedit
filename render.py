@@ -244,6 +244,17 @@ def render_ris(w: dict) -> str:
     return "".join(f"{tag}  - {value}\n" for tag, value in fields)
 
 
+def render_csl_json(w: dict) -> str:
+    """A one-item CSL-JSON array with only the fields populated so far.
+
+    ensure_ascii=False keeps non-Latin titles as literal UTF-8 rather than
+    \\uXXXX escapes; sort_keys plus a fixed key order keep two renders of the
+    same work byte-identical.
+    """
+    record = {"id": w["id"], "title": w.get("title")}
+    return json.dumps([record], ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+
+
 
 def _display(path: Path) -> str:
     """Repo-relative when it can be, absolute otherwise.
@@ -1571,6 +1582,7 @@ def main() -> int:
             )
             total += write(f"w/{wid}/citation.bib", work_bibtex(w))
             total += write(f"w/{wid}/citation.ris", render_ris(w))
+            total += write(f"w/{wid}/citation.csl.json", render_csl_json(w))
             n += 1
 
     for shard in sorted((DATA / "authors").glob("*.json")):
