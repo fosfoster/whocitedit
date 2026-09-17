@@ -23,6 +23,7 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
+import crossref
 import graph
 import identity
 import quality
@@ -149,6 +150,7 @@ def load(conn) -> dict:
     references: dict[str, list[str]] = {}
     coci_assertions: list[tuple[str, str]] = []
     crossref_envelopes: list[tuple[str, dict]] = []
+    crossref_reference_assertions: list[tuple[str, str]] = []
     europepmc_search_dois: dict[tuple[str, str], str] = {}
     europepmc_reference_assertions: list[tuple[tuple[str, str], str]] = []
     europepmc_results: list[tuple[str, dict]] = []
@@ -177,7 +179,13 @@ def load(conn) -> dict:
         # only after every OpenAlex work is inserted below, so the match does
         # not depend on the (hash-ordered) order raw files are visited in.
         if _is_crossref_work_envelope(payload):
-            crossref_envelopes.append((rec["sha256"], payload["message"]))
+            message = payload["message"]
+            crossref_envelopes.append((rec["sha256"], message))
+            citing_doi = message.get("DOI")
+            if citing_doi:
+                crossref_reference_assertions.extend(
+                    (citing_doi, cited_doi) for cited_doi in crossref.reference_dois(payload)
+                )
             continue
         # Europe PMC's DOI search echoes the (source, id) pair its references
         # endpoint uses to name the citing article, but never a citing DOI
@@ -227,6 +235,7 @@ def load(conn) -> dict:
     stats["citations"] = _insert_citations(
         conn, references, coci_assertions,
         europepmc_search_dois, europepmc_reference_assertions,
+        crossref_reference_assertions,
     )
     stats["crossref_assertions"] = _insert_crossref_assertions(conn, crossref_envelopes)
     stats["europepmc_assertions"] = _insert_europepmc_assertions(conn, europepmc_results)
@@ -432,7 +441,8 @@ def _normalized_doi(value: str | None) -> str | None:
 def _insert_citations(conn, references: dict[str, list[str]],
                       coci_assertions: list[tuple[str, str]],
                       europepmc_search_dois: dict[tuple[str, str], str],
-                      europepmc_reference_assertions: list[tuple[tuple[str, str], str]]) -> int:
+                      europepmc_reference_assertions: list[tuple[tuple[str, str], str]],
+                      crossref_reference_assertions: list[tuple[str, str]]) -> int:
     in_corpus = {r["id"] for r in conn.execute("SELECT id FROM work")}
     assertions: dict[tuple[str, str], set[str]] = {}
 
@@ -462,6 +472,16 @@ def _insert_citations(conn, references: dict[str, list[str]],
         cited = doi_to_work.get(_normalized_doi(cited_doi))
         if citing and cited and citing != cited:
             assertions.setdefault((citing, cited), set()).add("europepmc")
+
+    # A Crossref work envelope's `reference` array names cited DOIs directly,
+    # so no key resolution is needed here, unlike Europe PMC above. Resolve
+    # both ends against the same in-corpus DOI index and drop an unresolved
+    # DOI or self-pair silently, exactly as COCI and Europe PMC do.
+    for citing_doi, cited_doi in crossref_reference_assertions:
+        citing = doi_to_work.get(_normalized_doi(citing_doi))
+        cited = doi_to_work.get(_normalized_doi(cited_doi))
+        if citing and cited and citing != cited:
+            assertions.setdefault((citing, cited), set()).add("crossref")
 
     rows = [
         (citing, cited, graph.encode_sources(list(sources)))
