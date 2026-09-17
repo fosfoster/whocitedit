@@ -30,6 +30,8 @@ def work_page() -> str:
         {"s": "W1", "t": "W5", "sources": ["europepmc"]},
         {"s": "W6", "t": "W1", "sources": ["europepmc", "openalex", "opencitations"]},
         {"s": "W6", "t": "W5", "sources": ["europepmc", "openalex"], "inner": True},
+        {"s": "W2", "t": "W1", "sources": ["crossref"], "inner": True},
+        {"s": "W5", "t": "W1", "sources": ["crossref", "europepmc"], "inner": True},
         # This neighbour-to-neighbour edge proves the evidence list is made
         # from all exported edges, rather than reconstructed from two tables.
         {"s": "W3", "t": "W2", "sources": [], "inner": True},
@@ -87,7 +89,7 @@ def main() -> int:
         for citing, cited, status, body in rows
     }
     expected_edges = {("W1", "W2"), ("W3", "W1"), ("W1", "W4"), ("W3", "W2"), ("W4", "W2"),
-                      ("W1", "W5"), ("W6", "W1"), ("W6", "W5")}
+                      ("W1", "W5"), ("W6", "W1"), ("W6", "W5"), ("W2", "W1"), ("W5", "W1")}
     bad += check(set(evidence) == expected_edges,
                  "the evidence output does not represent every exported graph edge")
     bad += check(
@@ -120,6 +122,16 @@ def main() -> int:
         evidence.get(("W6", "W5"), (None, ""))[0] == "corroborated"
         and "Corroborated — OpenAlex and Europe PMC" in evidence[("W6", "W5")][1],
         "a two-of-three edge is not labelled corroborated by the indexes that assert it",
+    )
+    bad += check(
+        evidence.get(("W2", "W1"), (None, ""))[0] == "crossref-only"
+        and "Crossref only" in evidence[("W2", "W1")][1],
+        "the Crossref-only edge is not identified",
+    )
+    bad += check(
+        evidence.get(("W5", "W1"), (None, ""))[0] == "corroborated"
+        and "Corroborated — Europe PMC and Crossref" in evidence[("W5", "W1")][1],
+        "the Crossref/Europe PMC edge is not labelled corroborated by both",
     )
     for edge in (("W3", "W2"), ("W4", "W2")):
         bad += check(

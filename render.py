@@ -867,6 +867,13 @@ CITATION_SOURCE_NAMES = {
     "crossref": "Crossref",
 }
 
+CITATION_SOURCE_ONLY_LABELS = {
+    "openalex": "OpenAlex only",
+    "opencitations": "OpenCitations only — unconfirmed by OpenAlex",
+    "europepmc": "Europe PMC only",
+    "crossref": "Crossref only — unconfirmed by OpenAlex",
+}
+
 
 def citation_edge_status(edge: dict) -> tuple[str, str]:
     """Return a stable machine name and reader-facing source assessment."""
@@ -877,14 +884,9 @@ def citation_edge_status(edge: dict) -> tuple[str, str]:
         names = [CITATION_SOURCE_NAMES[s] for s in present]
         label = ", ".join(names[:-1]) + " and " + names[-1]
         return "corroborated", f"Corroborated — {label}"
-    if present == ["openalex"]:
-        return "openalex-only", "OpenAlex only"
-    if present == ["opencitations"]:
-        return "opencitations-only", "OpenCitations only — unconfirmed by OpenAlex"
-    if present == ["europepmc"]:
-        return "europepmc-only", "Europe PMC only"
-    if present == ["crossref"]:
-        return "crossref-only", "Crossref only — unconfirmed by OpenAlex"
+    if len(present) == 1:
+        source = present[0]
+        return f"{source}-only", CITATION_SOURCE_ONLY_LABELS[source]
     return "legacy", "Legacy edge — source detail unavailable"
 
 
