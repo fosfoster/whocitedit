@@ -827,6 +827,7 @@ CITATION_SOURCE_NAMES = {
     "openalex": "OpenAlex",
     "opencitations": "OpenCitations",
     "europepmc": "Europe PMC",
+    "crossref": "Crossref",
 }
 
 
@@ -845,6 +846,8 @@ def citation_edge_status(edge: dict) -> tuple[str, str]:
         return "opencitations-only", "OpenCitations only — unconfirmed by OpenAlex"
     if present == ["europepmc"]:
         return "europepmc-only", "Europe PMC only"
+    if present == ["crossref"]:
+        return "crossref-only", "Crossref only — unconfirmed by OpenAlex"
     return "legacy", "Legacy edge — source detail unavailable"
 
 
@@ -1595,12 +1598,13 @@ def render_methodology(corpus: dict) -> str:
 
 <div class="panel">
 <h2>How citation edges are corroborated</h2>
-<p>We call a citation edge <b>corroborated</b> only when at least two of OpenAlex,
-   OpenCitations and Europe PMC independently assert the same directed DOI-resolved edge:
-   the same citing work points to the same cited work.</p>
+<p>We call a citation edge <b>corroborated</b> when two or more independent indexes
+   independently assert the same directed DOI-resolved edge: the same citing work
+   points to the same cited work. OpenAlex, OpenCitations, Europe PMC and Crossref's
+   own asserted citations each count as one such index.</p>
 <p>An edge asserted by only one index remains visible. Its work-page evidence
-   identifies the single index, and an OpenCitations-only edge is explicitly
-   marked unconfirmed by OpenAlex.</p>
+   identifies the single index, and an OpenCitations-only or Crossref-only edge is
+   explicitly marked unconfirmed by OpenAlex.</p>
 </div>
 
 <div class="panel">

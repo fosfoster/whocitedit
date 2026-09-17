@@ -169,6 +169,7 @@ figure.graph figcaption { font-size: 12.5px; color: var(--ink-faint); margin-top
 .edge-status.corroborated { color: var(--high); }
 .edge-status.openalex-only { color: var(--medium); }
 .edge-status.opencitations-only { color: var(--low); }
+.edge-status.crossref-only { color: var(--low); }
 .edge-status.legacy { color: var(--ink-faint); }
 
 .withheld { border-left: 3px solid var(--medium); padding: 8px 0 8px 12px; color: var(--ink-soft); font-size: 13.5px; margin: 0 0 14px; }
