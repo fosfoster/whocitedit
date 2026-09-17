@@ -78,6 +78,30 @@ RIS_TYPES = {
 }
 
 
+# Same shape of mapping as RIS_TYPES, in CSL's own vocabulary of item types.
+CSL_TYPES = {
+    "article": "article-journal",
+    "book": "book",
+    "book-chapter": "chapter",
+    "book-review": "review-book",
+    "conference-abstract": "paper-conference",
+    "conference-paper": "paper-conference",
+    "data-paper": "article-journal",
+    "dataset": "dataset",
+    "dissertation": "thesis",
+    "editorial": "article-journal",
+    "erratum": "article-journal",
+    "other": "document",
+    "paratext": "document",
+    "preprint": "article",
+    "reference-entry": "entry",
+    "report": "report",
+    "review": "review",
+    "software": "software",
+    "software-paper": "article-journal",
+}
+
+
 def e(s) -> str:
     return html.escape(str(s if s is not None else ""), quote=True)
 
@@ -243,6 +267,39 @@ def render_ris(w: dict) -> str:
     fields.append(("ER", ""))
     return "".join(f"{tag}  - {value}\n" for tag, value in fields)
 
+
+def csl_year(w: dict) -> int | None:
+    """The publication year, preferring the full date, for CSL's date-parts."""
+    date = w.get("date") or w.get("year")
+    try:
+        return int(str(date)[:4])
+    except (TypeError, ValueError):
+        return None
+
+
+def work_csl_json(w: dict) -> str:
+    """CSL-JSON built only from the bibliographic fields already rendered elsewhere.
+
+    Deliberately excludes the abstract -- it is withheld or licence-gated on the
+    work page itself -- and any field sourced from something other than the
+    citation metadata (e.g. `oa`, `openalex_url`, `raw`), so a value carried in
+    the export for another purpose cannot leak into a citation manager import.
+    """
+    source = w.get("source") or {}
+    item: dict = {"id": w["id"], "type": CSL_TYPES.get(w.get("type"), "document")}
+    if w.get("title"):
+        item["title"] = w["title"]
+    authors = [{"literal": author["name"]} for author in w.get("authors") or [] if author.get("name")]
+    if authors:
+        item["author"] = authors
+    year = csl_year(w)
+    if year is not None:
+        item["issued"] = {"date-parts": [[year]]}
+    if source.get("name"):
+        item["container-title"] = source["name"]
+    if w.get("doi"):
+        item["DOI"] = w["doi"]
+    return json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n"
 
 
 def _display(path: Path) -> str:
@@ -815,6 +872,7 @@ def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
     links = [
         '<a href="citation.bib" download>Download BibTeX</a>',
         '<a href="citation.ris" download>Download RIS</a>',
+        '<a href="citation.csl.json" download>Download CSL-JSON</a>',
     ]
     if w["doi"]:
         links.append(f'<a href="{e(w["doi"])}">DOI</a>')
@@ -1571,6 +1629,7 @@ def main() -> int:
             )
             total += write(f"w/{wid}/citation.bib", work_bibtex(w))
             total += write(f"w/{wid}/citation.ris", render_ris(w))
+            total += write(f"w/{wid}/citation.csl.json", work_csl_json(w))
             n += 1
 
     for shard in sorted((DATA / "authors").glob("*.json")):
