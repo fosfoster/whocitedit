@@ -75,6 +75,16 @@ def sitemap_routes(sitemap: bytes) -> list[str]:
     return [urlsplit(node.text or "").path for node in root.iter() if node.tag.endswith("loc")]
 
 
+def sitemap_route_diff(local: list[str], remote: list[str]) -> tuple[list[str], list[str]]:
+    """Return sorted local-only and remote-only routes so the diff is order-independent."""
+    local_set, remote_set = set(local), set(remote)
+    return sorted(local_set - remote_set), sorted(remote_set - local_set)
+
+
+def describe_route_diff(local_only: list[str], remote_only: list[str]) -> str:
+    return f"local-only {', '.join(local_only) or 'none'}; remote-only {', '.join(remote_only) or 'none'}"
+
+
 def local_page(site: Path, route: str) -> Path:
     if route == "/":
         return site / "index.html"
@@ -151,18 +161,19 @@ def check_deploy(
 
     remote_sitemap = remote.get("/sitemap.xml")
     if remote_sitemap is None:
-        rows.append(("Sitemap URL count", "FAIL", "not fetched"))
+        rows.append(("Sitemap route set", "FAIL", "not fetched"))
     elif not 200 <= remote_sitemap.status < 300:
-        rows.append(("Sitemap URL count", "FAIL", "remote sitemap unavailable"))
+        rows.append(("Sitemap route set", "FAIL", "remote sitemap unavailable"))
     else:
         try:
-            remote_count = len(sitemap_routes(remote_sitemap.body))
-            local_count = len(routes)
-            status = "PASS" if remote_count == local_count else "FAIL"
-            rows.append(("Sitemap URL count", status, f"local {local_count}; remote {remote_count}"))
-            failures |= status == "FAIL"
+            local_only, remote_only = sitemap_route_diff(routes, sitemap_routes(remote_sitemap.body))
+            if local_only or remote_only:
+                rows.append(("Sitemap route set", "FAIL", describe_route_diff(local_only, remote_only)))
+                failures = True
+            else:
+                rows.append(("Sitemap route set", "PASS", f"{len(set(routes))} routes match"))
         except ElementTree.ParseError as error:
-            rows.append(("Sitemap URL count", "FAIL", f"invalid remote sitemap: {error}"))
+            rows.append(("Sitemap route set", "FAIL", f"invalid remote sitemap: {error}"))
             failures = True
 
     for route in ["/", "/methodology/"]:
