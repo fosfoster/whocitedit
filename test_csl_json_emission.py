@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline coverage for the per-work bare-bones CSL-JSON citation artifact."""
+"""Offline coverage for the per-work citation.json CSL-JSON artifact."""
 import json
 import shutil
 import sys
@@ -30,6 +30,14 @@ def update_work(data: Path, wid: str, **changes) -> None:
     raise KeyError(wid)
 
 
+def load_work(data: Path, wid: str) -> dict:
+    for path in (data / "works").glob("*.json"):
+        payload = json.loads(path.read_text())
+        if wid in payload:
+            return payload[wid]
+    raise KeyError(wid)
+
+
 def main() -> int:
     bad = 0
     tmp = Path(tempfile.mkdtemp())
@@ -55,7 +63,7 @@ def main() -> int:
         bad += check(render.main() == 0, "synthetic render failed")
 
         work_ids = {"W1", "W2", "W3"}
-        csl_paths = {wid: render.SITE / "w" / wid / "citation.csl.json" for wid in work_ids}
+        csl_paths = {wid: render.SITE / "w" / wid / "citation.json" for wid in work_ids}
         for wid, path in csl_paths.items():
             bad += check(path.exists(), f"missing CSL-JSON artifact for {wid}")
 
@@ -66,7 +74,7 @@ def main() -> int:
         )
         for wdir in all_work_dirs:
             extra = {p.name for p in wdir.iterdir()} - {
-                "index.html", "citation.bib", "citation.ris", "citation.csl.json",
+                "index.html", "citation.bib", "citation.ris", "citation.json",
             }
             bad += check(not extra, f"stray artifacts in w/{wdir.name}: {extra}")
 
@@ -74,16 +82,12 @@ def main() -> int:
 
         for wid, raw in first_bytes.items():
             parsed = json.loads(raw.decode("utf-8"))
-            bad += check(isinstance(parsed, list) and len(parsed) == 1,
-                         f"{wid} CSL-JSON is not a one-item array")
-            if isinstance(parsed, list) and len(parsed) == 1:
-                item = parsed[0]
-                bad += check(set(item) == {"id", "title"},
-                             f"{wid} CSL-JSON item has fields other than id/title: {set(item)}")
-                bad += check(item.get("id") == wid, f"{wid} CSL-JSON id does not match work id")
+            bad += check(parsed == render.work_csl_json(load_work(data, wid)),
+                         f"{wid} citation.json does not match render.work_csl_json")
+            bad += check(parsed.get("id") == wid, f"{wid} CSL-JSON id does not match work id")
 
         parsed_w1 = json.loads(first_bytes["W1"].decode("utf-8"))
-        bad += check(parsed_w1[0]["title"] == UTF8_TITLE,
+        bad += check(parsed_w1["title"] == UTF8_TITLE,
                      "UTF-8 title did not round-trip through the CSL-JSON artifact")
         bad += check("\\u" not in first_bytes["W1"].decode("utf-8"),
                      "UTF-8 title was escaped as \\uXXXX instead of stored literally")
