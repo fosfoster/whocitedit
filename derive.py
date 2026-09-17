@@ -496,6 +496,43 @@ def _normalize_venue(value: str) -> str:
     return re.sub(r"[^a-z0-9]", "", value)
 
 
+def _dict_get(value, key):
+    return value.get(key) if isinstance(value, dict) else None
+
+
+def europepmc_work_fields(result: dict) -> dict:
+    """Extract title, venue and date fields from one Europe PMC result.
+
+    Tolerates a missing or non-dict `journalInfo` (or `journalInfo.journal`)
+    rather than raising, since a harvested payload may carry either the
+    `resultType=core` or the older "lite" shape.
+    """
+    journal_info = _dict_get(result, "journalInfo")
+    journal = _dict_get(journal_info, "journal")
+
+    title = result.get("title")
+    title = title.strip() if isinstance(title, str) else None
+
+    venue = _dict_get(journal, "title") or result.get("journalTitle")
+    venue_short = _dict_get(journal, "medlineAbbreviation") or _dict_get(journal, "isoabbreviation")
+
+    publication_date = (
+        result.get("firstPublicationDate")
+        or _dict_get(journal_info, "printPublicationDate")
+    )
+    if not publication_date:
+        pub_year = result.get("pubYear")
+        publication_date = str(pub_year) if pub_year else None
+
+    return {
+        "doi": result.get("doi"),
+        "title": title or None,
+        "venue": venue,
+        "venue_short": venue_short,
+        "publication_date": publication_date,
+    }
+
+
 def venue_comparison_status(
     openalex_venue: str | None, crossref_venue: str | None, crossref_short: str | None
 ) -> str:
