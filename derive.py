@@ -87,6 +87,18 @@ def _is_europepmc_references(payload: dict) -> bool:
     return "referenceList" in payload
 
 
+def _is_europepmc_search_envelope(payload: dict) -> bool:
+    """A Europe PMC search response: `resultList` is a dict holding a `result` list.
+
+    Stricter than `_is_europepmc_search` above, whose membership check alone is
+    enough for the citing-DOI index but would also accept a malformed payload.
+    An OpenAlex `results` payload, a Crossref work envelope, and the Europe PMC
+    *references* payload (`referenceList`, not `resultList`) all fail this.
+    """
+    result_list = payload.get("resultList")
+    return isinstance(result_list, dict) and isinstance(result_list.get("result"), list)
+
+
 def _load_fields(conn) -> dict[str, dict]:
     definitions = normalize(json.loads(CORPUS.read_text()))
     if not definitions:
@@ -139,6 +151,7 @@ def load(conn) -> dict:
     crossref_envelopes: list[tuple[str, dict]] = []
     europepmc_search_dois: dict[tuple[str, str], str] = {}
     europepmc_reference_assertions: list[tuple[tuple[str, str], str]] = []
+    europepmc_results: list[tuple[str, dict]] = []
     definitions = _load_fields(conn)
 
     for rec, observations, payload in _payloads():
@@ -178,6 +191,15 @@ def load(conn) -> dict:
                 source, ext_id, doi = result.get("source"), result.get("id"), result.get("doi")
                 if source and ext_id and doi:
                     europepmc_search_dois[(source, ext_id)] = doi
+            # Collect the same results now but reconcile by DOI only after every
+            # OpenAlex work is inserted below, exactly like the Crossref
+            # envelopes above, so the match does not depend on raw-file order.
+            if _is_europepmc_search_envelope(payload):
+                europepmc_results.extend(
+                    (rec["sha256"], result)
+                    for result in payload["resultList"]["result"]
+                    if isinstance(result, dict)
+                )
             continue
         if _is_europepmc_references(payload):
             request = payload.get("request") or {}
@@ -207,6 +229,7 @@ def load(conn) -> dict:
         europepmc_search_dois, europepmc_reference_assertions,
     )
     stats["crossref_assertions"] = _insert_crossref_assertions(conn, crossref_envelopes)
+    stats["europepmc_assertions"] = _insert_europepmc_assertions(conn, europepmc_results)
     return stats
 
 
@@ -625,6 +648,43 @@ def europepmc_work_fields(result: dict) -> dict:
     }
 
 
+def _insert_europepmc_assertions(conn, results: list[tuple[str, dict]]) -> int:
+    """Join stored Europe PMC search results to the corpus by normalized DOI.
+
+    Runs after every OpenAlex work is in place, so a result whose DOI is not
+    (yet, or ever) in the corpus is simply dropped rather than stored dangling.
+    """
+    doi_to_work: dict[str, str] = {}
+    for row in conn.execute("SELECT id, doi FROM work"):
+        doi = _normalized_doi(row["doi"])
+        if doi:
+            doi_to_work.setdefault(doi, row["id"])
+
+    count = 0
+    for raw_sha, result in results:
+        fields = europepmc_work_fields(result)
+        wid = doi_to_work.get(_normalized_doi(fields["doi"]))
+        if not wid:
+            continue
+        conn.execute(
+            "INSERT INTO europepmc_work_assertion("
+            "  work_id, raw_sha, title, venue, venue_short, publication_date) "
+            "VALUES(?,?,?,?,?,?) ON CONFLICT(work_id, raw_sha) DO UPDATE SET "
+            "title=excluded.title, venue=excluded.venue, venue_short=excluded.venue_short, "
+            "publication_date=excluded.publication_date",
+            (
+                wid,
+                raw_sha,
+                fields["title"],
+                fields["venue"],
+                fields["venue_short"],
+                fields["publication_date"],
+            ),
+        )
+        count += 1
+    return count
+
+
 def venue_comparison_status(
     openalex_venue: str | None, crossref_venue: str | None, crossref_short: str | None
 ) -> str:
@@ -748,7 +808,8 @@ def main() -> int:
     print(f"   {stats['payloads']} payloads -> {stats['works']} works, "
           f"{stats['authors']} author records, {stats['authorships']} authorships, "
           f"{stats['citations']} in-corpus citations, "
-          f"{stats['crossref_assertions']} crossref work assertions")
+          f"{stats['crossref_assertions']} crossref work assertions, "
+          f"{stats['europepmc_assertions']} europepmc work assertions")
 
     print("== co-authorship")
     edges = graph.build_coauthorship(conn, now_year)

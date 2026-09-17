@@ -223,6 +223,20 @@ CREATE TABLE IF NOT EXISTS crossref_work_assertion (
 );
 CREATE INDEX IF NOT EXISTS crossref_work_assertion_work ON crossref_work_assertion(work_id);
 
+-- Europe PMC is an additive observation, never a replacement for the OpenAlex
+-- `work` row: nothing here corrects or deletes a record, it only records what
+-- Europe PMC separately asserted about the same DOI for a later comparison.
+CREATE TABLE IF NOT EXISTS europepmc_work_assertion (
+  work_id          TEXT NOT NULL REFERENCES work(id),
+  raw_sha          TEXT NOT NULL REFERENCES raw_payload(sha256),
+  title            TEXT,
+  venue            TEXT,
+  venue_short      TEXT,
+  publication_date TEXT,
+  PRIMARY KEY (work_id, raw_sha)
+);
+CREATE INDEX IF NOT EXISTS europepmc_work_assertion_work ON europepmc_work_assertion(work_id);
+
 CREATE TABLE IF NOT EXISTS corpus_meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
