@@ -31,6 +31,18 @@ COMPLETE = "complete"
 PARTIAL = "partial"
 SUSPECT = "suspect"
 
+# The three-way verdict a title/date/venue signal can carry once Europe PMC's
+# assertion is folded in alongside Crossref's. `agree`/`unavailable` collapse
+# the same way the old two-way status did; the two disagreement cases only
+# exist because a source can now disagree alone, and the reader needs to know
+# which one, or a Europe-PMC-only contradiction reads identically to a
+# three-way agreement.
+AGREE = "agree"
+CROSSREF_DISAGREES = "crossref_disagrees"
+EUROPEPMC_DISAGREES = "europepmc_disagrees"
+BOTH_DISAGREE = "both_disagree"
+UNAVAILABLE = "unavailable"
+
 # A DOI suffix very often embeds the year of the proceedings it belongs to.
 # Where it does and the year disagrees with the record's own publication year,
 # one of the two is wrong about which paper this is.
@@ -63,9 +75,19 @@ NOTE_TEMPLATES = {
         "supports": "A title is present.",
     },
     "venue_source": {
-        "weakens": "OpenAlex and Crossref disagree about this work's venue. Both are shown as parallel observations; neither is corrected here.",
-        "supports": "Crossref's venue assertion agrees with OpenAlex's.",
-        "neutral": "No comparable Crossref venue assertion is available.",
+        "weakens": "The sources disagree about this work's venue. Each is shown as a parallel observation; none is corrected here.",
+        "supports": "The sources agree about this work's venue.",
+        "neutral": "No comparable source assertion is available for this work's venue.",
+    },
+    "title_source": {
+        "weakens": "The sources disagree about this work's title. Each is shown as a parallel observation; none is corrected here.",
+        "supports": "The sources agree about this work's title.",
+        "neutral": "No comparable source assertion is available for this work's title.",
+    },
+    "date_source": {
+        "weakens": "The sources disagree about this work's publication date. Each is shown as a parallel observation; none is corrected here.",
+        "supports": "The sources agree about this work's publication date.",
+        "neutral": "No comparable source assertion is available for this work's publication date.",
     },
     "work_type_source": {
         "weakens": "OpenAlex and Crossref disagree about this work's type. Both are shown as parallel observations; neither is corrected here.",
@@ -89,6 +111,25 @@ def doi_year(doi: str | None) -> int | None:
     return years[-1] if years else None
 
 
+def source_verdict(crossref_status: str | None, europepmc_status: str | None) -> str:
+    """Fold a Crossref-vs-OpenAlex status and a Europe-PMC-vs-OpenAlex status
+    into one three-way verdict. `agree`/`unavailable`/`incomparable`/`None`
+    are all "nothing contradicts OpenAlex here" on their own account; the only
+    thing that matters is which source, if either, actively disagrees.
+    """
+    crossref_disagrees = crossref_status == "disagree"
+    europepmc_disagrees = europepmc_status == "disagree"
+    if crossref_disagrees and europepmc_disagrees:
+        return BOTH_DISAGREE
+    if crossref_disagrees:
+        return CROSSREF_DISAGREES
+    if europepmc_disagrees:
+        return EUROPEPMC_DISAGREES
+    if crossref_status == "agree" or europepmc_status == "agree":
+        return AGREE
+    return UNAVAILABLE
+
+
 def assess(
     *,
     title: str | None,
@@ -98,6 +139,11 @@ def assess(
     referenced_count: int,
     cited_by_count: int,
     venue_status: str | None = None,
+    venue_europepmc_status: str | None = None,
+    title_status: str | None = None,
+    title_europepmc_status: str | None = None,
+    date_status: str | None = None,
+    date_europepmc_status: str | None = None,
     work_type_status: str | None = None,
 ) -> tuple[str, list[dict]]:
     evidence: list[dict] = []
@@ -143,13 +189,24 @@ def assess(
     )
 
     # Only an explicit cross-source disagreement counts against the record.
-    # `unavailable` (no comparable Crossref assertion) and `incomparable`
-    # (an unmapped Crossref type) get the same neutral treatment `doi_year`
-    # gives a missing year, so a corpus with no Crossref harvest yet scores
-    # exactly as it did before these signals existed.
-    for signal, status in (("venue_source", venue_status), ("work_type_source", work_type_status)):
-        direction = "supports" if status == "agree" else "weakens" if status == "disagree" else "neutral"
-        evidence.append({"signal": signal, "value": status, "direction": direction})
+    # `unavailable` (no comparable assertion) and `incomparable` (an unmapped
+    # Crossref type) get the same neutral treatment `doi_year` gives a missing
+    # year, so a corpus with no Crossref/Europe PMC harvest yet scores exactly
+    # as it did before these signals existed. Europe PMC asserts no work type,
+    # so work_type_source stays a two-way Crossref-vs-OpenAlex signal.
+    for signal, crossref, europepmc in (
+        ("venue_source", venue_status, venue_europepmc_status),
+        ("title_source", title_status, title_europepmc_status),
+        ("date_source", date_status, date_europepmc_status),
+    ):
+        verdict = source_verdict(crossref, europepmc)
+        direction = "neutral" if verdict == UNAVAILABLE else "supports" if verdict == AGREE else "weakens"
+        evidence.append({"signal": signal, "value": crossref, "verdict": verdict, "direction": direction})
+
+    work_type_direction = (
+        "supports" if work_type_status == "agree" else "weakens" if work_type_status == "disagree" else "neutral"
+    )
+    evidence.append({"signal": "work_type_source", "value": work_type_status, "direction": work_type_direction})
 
     weakened = sum(1 for e in evidence if e["direction"] == "weakens")
     band = COMPLETE if weakened == 0 else PARTIAL if weakened == 1 else SUSPECT
