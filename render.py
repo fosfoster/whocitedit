@@ -777,6 +777,43 @@ def record_comparison_html(comparison: dict | None, payloads: dict) -> str:
 """
 
 
+def source_comparison_html(comparison: dict | None, payloads: dict) -> str:
+    """Venue and work type, one row per source assertion, each with its own provenance.
+
+    Additive only, like `record_comparison_html`: nothing here edits or merges
+    the OpenAlex record above it. Omitted entirely when the export carries no
+    `source_comparison` block, which is the case for every work page built
+    from the committed `web/data` release until an operator re-runs the
+    harvest, derive and export with t2's Crossref venue/type comparison.
+    """
+    if not comparison:
+        return ""
+    sections = []
+    for key, label in (("venue", "Venue"), ("work_type", "Work type")):
+        field = comparison[key]
+        status = field["status"]
+        rows = []
+        for source_row in (field["openalex"], *field["crossref"]):
+            value = e(source_row["value"]) if source_row["value"] else '<span class="faint">not asserted</span>'
+            fetched = payloads.get(source_row["raw"], {}).get("fetched_at", "unknown")
+            rows.append(
+                f'<li><b>{e(source_row["source"])}</b>: {value} '
+                f'<span class="mono faint">sha256 {e(source_row["raw"])} &middot; fetched {e(fetched)}</span></li>'
+            )
+        sections.append(
+            f'<li><span class="badge {e(status)}">{e(status)}</span> <span>{label}</span>'
+            f'<ul class="evidence">{"".join(rows)}</ul></li>'
+        )
+    role = comparison["role"]
+    return f"""
+  <div class="panel">
+    <h2>Venue and work type across sources</h2>
+    <p class="meta">{e(role)}</p>
+    <ul class="evidence">{"".join(sections)}</ul>
+  </div>
+"""
+
+
 def author_provenance(a: dict, work_raw: dict[str, object]) -> tuple[str | list[str], bool]:
     """Resolve an author's direct payload, or the payloads of its exported works."""
     if a.get("raw"):
@@ -1065,6 +1102,7 @@ def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
   </div>
   {crossref_comparison_html(w.get("crossref_comparison"))}
   {record_comparison_html(w.get("record_comparison"), payloads)}
+  {source_comparison_html(w.get("source_comparison"), payloads)}
 </div>
 </div>
 """

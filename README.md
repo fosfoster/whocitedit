@@ -167,3 +167,14 @@ keeps only its venue, type, plain-text title and a publication date at the
 precision Crossref gave. Work pages show those beside the OpenAlex values as
 `agree`/`disagree`/`unavailable` with both payload hashes; the OpenAlex record
 itself is never changed by a disagreement.
+
+**Venue and work type as parallel observations.** A work page shows the
+OpenAlex and Crossref venue and work-type assertions side by side, each
+labelled by its source and carrying its own payload hash and fetch time.
+Neither record is edited or merged into the other; a disagreement is shown,
+not resolved. Agreement on venue counts a journal abbreviation (Crossref's
+`container-title` short form) the same as the full title, so an abbreviation
+is not reported as a contradiction. Work type is compared through a fixed
+Crossref-to-OpenAlex vocabulary mapping; a Crossref type with no mapped
+OpenAlex equivalent is reported as `incomparable`, not `disagree` — an
+unmapped type pair is not evidence of a defect.
