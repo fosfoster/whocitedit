@@ -9,12 +9,14 @@ independently from that fixture -- not against whatever the implementation
 happens to produce.
 """
 import json
+import re
 import shutil
 import sys
 import tempfile
 from pathlib import Path
 
 import export_json
+import render
 from test_pipeline import build_corpus
 
 
@@ -99,6 +101,55 @@ def main() -> int:
             coverage.get("single_index") == expected_single_index,
             f"single_index is {coverage.get('single_index')!r}, "
             f"expected {expected_single_index!r}",
+        )
+
+        html = render.render_methodology(corpus)
+        panel_match = re.search(
+            r'<h2>How citation edges are corroborated</h2>.*?</div>', html, re.S
+        )
+        bad += check(panel_match is not None, "corroboration panel is missing from methodology")
+        panel = panel_match.group(0) if panel_match else ""
+
+        rows = re.findall(r"<tr><td>(.*?)</td><td class=\"num\">(.*?)</td>"
+                           r"<td class=\"num\">[^<]*</td></tr>", panel)
+        bad += check(
+            len(rows) == len(expected_by_index_count) + len(expected_single_index),
+            f"coverage table has {len(rows)} rows, expected "
+            f"{len(expected_by_index_count) + len(expected_single_index)}",
+        )
+
+        bucket_rows = {label: count for label, count in rows[: len(expected_by_index_count)]}
+        for n, count in expected_by_index_count.items():
+            label = f"Asserted by {n} index(es)"
+            bad += check(
+                bucket_rows.get(label) == f"{count:,}",
+                f"bucket row for {label!r} is {bucket_rows.get(label)!r}, expected {count:,}",
+            )
+
+        source_rows = {label: count for label, count in rows[len(expected_by_index_count):]}
+        for source_id, count in expected_single_index.items():
+            name = render.CITATION_SOURCE_NAMES.get(source_id, source_id)
+            bad += check(
+                source_rows.get(name) == f"{count:,}",
+                f"single-index row for {name!r} is {source_rows.get(name)!r}, expected {count:,}",
+            )
+
+        minimal_corpus = {
+            "abstracts": {},
+            "sources": [],
+            "identity": {"high": 0, "medium": 0, "low": 0},
+            "quality": {"complete": 0, "partial": 0, "suspect": 0},
+        }
+        minimal_html = render.render_methodology(minimal_corpus)
+        bad += check(
+            "How citation edges are corroborated" in minimal_html,
+            "corroboration prose is missing when citation_edge_coverage is absent",
+        )
+        bad += check(
+            '<table>' not in re.search(
+                r'<h2>How citation edges are corroborated</h2>.*?</div>', minimal_html, re.S
+            ).group(0),
+            "a coverage table rendered even though citation_edge_coverage is absent",
         )
     finally:
         (export_json.OUT, export_json.DB_PATH, export_json.ROOT) = saved
