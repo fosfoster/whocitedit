@@ -205,6 +205,20 @@ def institution_head_metadata(i: dict, canonical: str) -> str:
     return json_ld(org)
 
 
+def topic_head_metadata(t: dict, canonical: str) -> str:
+    """DefinedTerm metadata limited to the topic record's public identities."""
+    term = {
+        "@context": "https://schema.org",
+        "@type": "DefinedTerm",
+        "@id": canonical,
+        "url": canonical,
+        "name": t["name"],
+    }
+    if t.get("openalex_url"):
+        term["sameAs"] = [t["openalex_url"]]
+    return json_ld(term)
+
+
 def bibtex_escape(value) -> str:
     """Escape a UTF-8 value for a braced BibTeX field."""
     escaped = []
@@ -1397,6 +1411,7 @@ def render_topic(t: dict, payloads: dict, work_ids: set[str], author_ids: set[st
         description=f'{t["name"]}: citation-ranked works and participating authors.',
         body=body,
         path=f"t/{t['id']}/",
+        extra_head=topic_head_metadata(t, canonical_url(f"t/{t['id']}/")),
     )
 
 
