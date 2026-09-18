@@ -1647,6 +1647,31 @@ def render_methodology(corpus: dict) -> str:
         f'<td>{e(s["role"])}</td></tr>'
         for s in declared_sources
     )
+    coverage = corpus.get("citation_edge_coverage")
+    coverage_table = ""
+    if coverage:
+        total = coverage["total"]
+        corroborated_total = sum(
+            count for n, count in coverage["by_index_count"].items() if int(n) >= 2
+        )
+        coverage_rows = "".join(
+            f'<tr><td>Asserted by {e(n)} index(es)</td><td class="num">{num(count)}</td>'
+            f'<td class="num">{count / total:.0%}</td></tr>'
+            for n, count in coverage["by_index_count"].items()
+        )
+        coverage_rows += "".join(
+            f'<tr><td>{e(CITATION_SOURCE_NAMES.get(source, source))}</td>'
+            f'<td class="num">{num(count)}</td>'
+            f'<td class="num">{count / total:.0%}</td></tr>'
+            for source, count in coverage["single_index"].items()
+        )
+        coverage_table = f"""<div class="scroll"><table>
+  <thead><tr><th>Bucket</th><th class="num">Edges</th><th class="num">Share</th></tr></thead>
+  <tbody>{coverage_rows}</tbody>
+</table></div>
+<p class="meta">Currently {num(corroborated_total)} of {num(total)} citation edges are corroborated.</p>
+"""
+
     body = f"""
 <h1>Methodology</h1>
 <p class="lede">What is in this corpus, where every figure came from, and the three
@@ -1672,7 +1697,7 @@ def render_methodology(corpus: dict) -> str:
 <p>An edge asserted by only one index remains visible. Its work-page evidence
    identifies the single index, and an OpenCitations-only or Crossref-only edge is
    explicitly marked unconfirmed by OpenAlex.</p>
-</div>
+{coverage_table}</div>
 
 <div class="panel">
 <h2>Collaboration weight is not a count of shared papers</h2>
