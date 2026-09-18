@@ -1,0 +1,15 @@
+{
+  "feed": {
+    "entry": [
+      {
+        "id": "http://arxiv.org/abs/2401.00001v1",
+        "arxiv_id": "2401.00001",
+        "doi": "10.5555/source-paper",
+        "title": "A fixture arXiv paper",
+        "references": [
+          {"doi": "10.5555/reference-one"}
+        ]
+      }
+    ]
+  }
+}
