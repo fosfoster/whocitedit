@@ -68,7 +68,7 @@ def main() -> int:
                  "citation DOI is missing")
     bad += check(tags.get("citation_public_url") == [canonical],
                  "citation public URL does not match canonical URL")
-    bad += check(block is not None and ld["@type"] == "CreativeWork", "CreativeWork JSON-LD is missing")
+    bad += check(block is not None and ld["@type"] == "ScholarlyArticle", "CreativeWork JSON-LD is missing")
     ld = ld or {}
     bad += check(ld.get("@id") == canonical and ld.get("url") == canonical,
                  "CreativeWork canonical identifiers do not match")
