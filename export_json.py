@@ -122,21 +122,39 @@ def _crossref_comparison(conn, wid: str, source_name: str | None, work_type: str
 
 
 SOURCE_COMPARISON_ROLE = (
-    "Crossref is shown beside OpenAlex as a parallel observation of the same "
-    "work; neither record is corrected by the other."
+    "Crossref and Europe PMC are each shown beside OpenAlex as a parallel "
+    "observation of the same work; neither record is corrected by the other."
 )
 
 
-def _source_comparison(conn, wid: str, source_name: str | None, work_type: str | None, raw_sha: str) -> dict:
-    """Every Crossref venue/type assertion for this work, beside OpenAlex's own.
+def _source_comparison(
+    conn,
+    wid: str,
+    source_name: str | None,
+    work_type: str | None,
+    raw_sha: str,
+    title: str | None,
+    date: str | None,
+) -> dict:
+    """Every Crossref venue/type assertion for this work, beside OpenAlex's own,
+    plus a title/date verdict that also folds in Europe PMC's assertions.
 
     Unlike `_crossref_comparison` above, which compares against only the
-    earliest envelope, this keeps every Crossref observation so a reader can
-    see all of them -- and a work's combined status disagrees if any one of
-    them does, even when another agrees.
+    earliest envelope, this keeps every observation so a reader can see all of
+    them -- and a work's combined status disagrees if any one of them does,
+    even when another agrees. Venue and work type stay Crossref-only, two-way
+    (`agree`/`disagree`/`unavailable`) statuses, since Europe PMC's search
+    result carries no work-type assertion to compare and its venue field is
+    folded elsewhere; title and date carry the four-way verdict from
+    `quality.source_verdict`, which names which source, if either, disagrees.
     """
     rows = conn.execute(
-        "SELECT raw_sha, venue, venue_short, work_type FROM crossref_work_assertion "
+        "SELECT raw_sha, venue, venue_short, work_type, title, published FROM crossref_work_assertion "
+        "WHERE work_id = ? ORDER BY raw_sha",
+        (wid,),
+    ).fetchall()
+    europepmc_rows = conn.execute(
+        "SELECT raw_sha, title, publication_date FROM europepmc_work_assertion "
         "WHERE work_id = ? ORDER BY raw_sha",
         (wid,),
     ).fetchall()
@@ -157,6 +175,33 @@ def _source_comparison(conn, wid: str, source_name: str | None, work_type: str |
         [derive.work_type_comparison_status(work_type, r["work_type"]) for r in rows]
     )
 
+    title_crossref = [{"source": "Crossref", "value": r["title"], "raw": r["raw_sha"]} for r in rows]
+    title_europepmc = [
+        {"source": "Europe PMC", "value": r["title"], "raw": r["raw_sha"]} for r in europepmc_rows
+    ]
+    title_status = quality.source_verdict(
+        derive.combined_comparison_status([derive.title_comparison_status(title, r["title"]) for r in rows]),
+        derive.combined_comparison_status(
+            [derive.title_comparison_status(title, r["title"]) for r in europepmc_rows]
+        ),
+    )
+
+    date_crossref = [{"source": "Crossref", "value": r["published"], "raw": r["raw_sha"]} for r in rows]
+    date_europepmc = [
+        {"source": "Europe PMC", "value": r["publication_date"], "raw": r["raw_sha"]}
+        for r in europepmc_rows
+    ]
+    date_crossref_comparisons = [derive.date_comparison(date, r["published"]) for r in rows]
+    date_europepmc_comparisons = [derive.date_comparison(date, r["publication_date"]) for r in europepmc_rows]
+    date_status = quality.source_verdict(
+        derive.combined_comparison_status([status for status, _ in date_crossref_comparisons]),
+        derive.combined_comparison_status([status for status, _ in date_europepmc_comparisons]),
+    )
+    date_precision = next(
+        (precision for _, precision in date_crossref_comparisons + date_europepmc_comparisons if precision),
+        None,
+    )
+
     return {
         "role": SOURCE_COMPARISON_ROLE,
         "venue": {
@@ -168,6 +213,19 @@ def _source_comparison(conn, wid: str, source_name: str | None, work_type: str |
             "openalex": {"source": "OpenAlex", "value": work_type, "raw": raw_sha},
             "crossref": type_crossref,
             "status": work_type_status,
+        },
+        "title": {
+            "openalex": {"source": "OpenAlex", "value": title, "raw": raw_sha},
+            "crossref": title_crossref,
+            "europepmc": title_europepmc,
+            "status": title_status,
+        },
+        "date": {
+            "openalex": {"source": "OpenAlex", "value": date, "raw": raw_sha},
+            "crossref": date_crossref,
+            "europepmc": date_europepmc,
+            "status": date_status,
+            "precision": date_precision,
         },
     }
 
@@ -293,7 +351,10 @@ def work_payload(conn, row, neighbourhood) -> dict:
         "openalex_url": f"https://openalex.org/{wid}",
         "crossref_comparison": _crossref_comparison(conn, wid, row["source_name"], row["type"]),
         "record_comparison": _record_comparison(conn, row),
-        "source_comparison": _source_comparison(conn, wid, row["source_name"], row["type"], row["raw_sha"]),
+        "source_comparison": _source_comparison(
+            conn, wid, row["source_name"], row["type"], row["raw_sha"], row["title"],
+            row["publication_date"] or (str(row["year"]) if row["year"] else None),
+        ),
     }
 
 

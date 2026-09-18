@@ -778,7 +778,10 @@ def record_comparison_html(comparison: dict | None, payloads: dict) -> str:
 
 
 def source_comparison_html(comparison: dict | None, payloads: dict) -> str:
-    """Venue and work type, one row per source assertion, each with its own provenance.
+    """Venue, work type, title and date, one row per source assertion, each with
+    its own provenance. Title and date carry the four-way verdict from
+    `quality.source_verdict`, so a Europe-PMC-only disagreement is shown as
+    `europepmc_disagrees`, distinct from a Crossref-only `crossref_disagrees`.
 
     Additive only, like `record_comparison_html`: nothing here edits or merges
     the OpenAlex record above it. Omitted entirely when the export carries no
@@ -789,11 +792,15 @@ def source_comparison_html(comparison: dict | None, payloads: dict) -> str:
     if not comparison:
         return ""
     sections = []
-    for key, label in (("venue", "Venue"), ("work_type", "Work type")):
-        field = comparison[key]
+    for key, label in (("venue", "Venue"), ("work_type", "Work type"), ("title", "Title"), ("date", "Publication date")):
+        field = comparison.get(key)
+        if field is None:
+            continue
         status = field["status"]
+        precision = field.get("precision")
+        scope = f' <span class="faint">compared to the {e(precision)}</span>' if precision else ""
         rows = []
-        for source_row in (field["openalex"], *field["crossref"]):
+        for source_row in (field["openalex"], *field["crossref"], *field.get("europepmc", ())):
             value = e(source_row["value"]) if source_row["value"] else '<span class="faint">not asserted</span>'
             fetched = payloads.get(source_row["raw"], {}).get("fetched_at", "unknown")
             rows.append(
@@ -801,13 +808,13 @@ def source_comparison_html(comparison: dict | None, payloads: dict) -> str:
                 f'<span class="mono faint">sha256 {e(source_row["raw"])} &middot; fetched {e(fetched)}</span></li>'
             )
         sections.append(
-            f'<li><span class="badge {e(status)}">{e(status)}</span> <span>{label}</span>'
+            f'<li><span class="badge {e(status)}">{e(status)}</span> <span>{label}</span>{scope}'
             f'<ul class="evidence">{"".join(rows)}</ul></li>'
         )
     role = comparison["role"]
     return f"""
   <div class="panel">
-    <h2>Venue and work type across sources</h2>
+    <h2>Venue, work type, title and date across sources</h2>
     <p class="meta">{e(role)}</p>
     <ul class="evidence">{"".join(sections)}</ul>
   </div>

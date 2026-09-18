@@ -213,6 +213,10 @@ input[type=search]:focus-visible, a:focus-visible, button:focus-visible {
 .badge.disagree { color: var(--low); }
 .badge.unavailable, .badge.incomparable { color: var(--ink-faint); }
 
+/* Title/date carry a four-way verdict once Europe PMC is folded in alongside
+   Crossref: which source, if either, disagrees is the point of showing it. */
+.badge.crossref_disagrees, .badge.europepmc_disagrees, .badge.both_disagree { color: var(--low); }
+
 .cohort-summary {
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;
   margin: 0 0 18px;
