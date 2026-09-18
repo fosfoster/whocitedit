@@ -991,6 +991,20 @@ def main() -> int:
             "role": "citation edges asserted by the publisher-supplied reference list",
         },
     }
+    by_index_count: dict[int, int] = {}
+    single_index: dict[str, int] = {}
+    for row in conn.execute("SELECT sources FROM citation").fetchall():
+        edge_sources = json.loads(row["sources"])
+        n = len(edge_sources)
+        by_index_count[n] = by_index_count.get(n, 0) + 1
+        if n == 1:
+            source_id = edge_sources[0]
+            single_index[source_id] = single_index.get(source_id, 0) + 1
+    citation_edge_coverage = {
+        "total": sum(by_index_count.values()),
+        "by_index_count": {str(n): c for n, c in sorted(by_index_count.items())},
+        "single_index": single_index,
+    }
     _write(
         OUT / "corpus.json",
         {
@@ -1024,6 +1038,7 @@ def main() -> int:
             # `sources`. Keep the legacy list until every committed reader has
             # moved to the keyed declaration contract.
             "citation_sources": citation_sources,
+            "citation_edge_coverage": citation_edge_coverage,
             "sources": [
                 {key: value for key, value in source.items() if key != "id"}
                 for source in citation_sources.values()
