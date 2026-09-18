@@ -764,18 +764,40 @@ def score_quality(conn) -> dict[str, int]:
     """Flag work records that contradict themselves. Nothing is deleted."""
     bands = {quality.COMPLETE: 0, quality.PARTIAL: 0, quality.SUSPECT: 0}
     for row in conn.execute(
-        "SELECT w.id, w.title, w.doi, w.year, w.referenced_count, w.cited_by_count,"
+        "SELECT w.id, w.title, w.doi, w.year, w.publication_date, w.referenced_count, w.cited_by_count,"
         "       w.type, w.source_name,"
         "       (SELECT COUNT(*) FROM authorship a WHERE a.work_id = w.id) AS n_authors"
         "  FROM work w"
     ):
         assertions = conn.execute(
-            "SELECT venue, venue_short, work_type FROM crossref_work_assertion "
+            "SELECT venue, venue_short, work_type, title, published FROM crossref_work_assertion "
             "WHERE work_id = ? ORDER BY raw_sha",
             (row["id"],),
         ).fetchall()
+        europepmc_assertions = conn.execute(
+            "SELECT venue, venue_short, title, publication_date FROM europepmc_work_assertion "
+            "WHERE work_id = ? ORDER BY raw_sha",
+            (row["id"],),
+        ).fetchall()
+        openalex_date = row["publication_date"] or (str(row["year"]) if row["year"] else None)
+
         venue_status = combined_comparison_status(
             [venue_comparison_status(row["source_name"], a["venue"], a["venue_short"]) for a in assertions]
+        )
+        venue_europepmc_status = combined_comparison_status(
+            [venue_comparison_status(row["source_name"], a["venue"], a["venue_short"]) for a in europepmc_assertions]
+        )
+        title_status = combined_comparison_status(
+            [title_comparison_status(row["title"], a["title"]) for a in assertions]
+        )
+        title_europepmc_status = combined_comparison_status(
+            [title_comparison_status(row["title"], a["title"]) for a in europepmc_assertions]
+        )
+        date_status = combined_comparison_status(
+            [date_comparison(openalex_date, a["published"])[0] for a in assertions]
+        )
+        date_europepmc_status = combined_comparison_status(
+            [date_comparison(openalex_date, a["publication_date"])[0] for a in europepmc_assertions]
         )
         work_type_status = combined_comparison_status(
             [work_type_comparison_status(row["type"], a["work_type"]) for a in assertions]
@@ -788,6 +810,11 @@ def score_quality(conn) -> dict[str, int]:
             referenced_count=row["referenced_count"],
             cited_by_count=row["cited_by_count"],
             venue_status=venue_status,
+            venue_europepmc_status=venue_europepmc_status,
+            title_status=title_status,
+            title_europepmc_status=title_europepmc_status,
+            date_status=date_status,
+            date_europepmc_status=date_europepmc_status,
             work_type_status=work_type_status,
         )
         bands[band] += 1
