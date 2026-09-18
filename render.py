@@ -205,6 +205,20 @@ def institution_head_metadata(i: dict, canonical: str) -> str:
     return json_ld(org)
 
 
+def home_head_metadata(canonical: str) -> str:
+    """WebSite metadata for the homepage."""
+    website = {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "@id": canonical,
+        "url": canonical,
+        "name": SITE_NAME,
+        "description": TAGLINE,
+        "inLanguage": "en",
+    }
+    return json_ld(website)
+
+
 def bibtex_escape(value) -> str:
     """Escape a UTF-8 value for a braced BibTeX field."""
     escaped = []
@@ -1470,7 +1484,13 @@ def render_home(corpus: dict, works: list, authors: list) -> str:
    <a href="institutions/">Browse institutions</a> &middot;
    <a href="topics/">Browse topics</a></p>
 """
-    return page(title=f"{SITE_NAME} — {TAGLINE}", description=TAGLINE, body=body, path="")
+    return page(
+        title=f"{SITE_NAME} — {TAGLINE}",
+        description=TAGLINE,
+        body=body,
+        path="",
+        extra_head=home_head_metadata(canonical_url("")),
+    )
 
 
 def render_browse(kind: str, rows: list, corpus: dict) -> str:
