@@ -230,9 +230,9 @@ def _source_comparison(
     }
 
 
-# Crossref's only job on a work page. It is declared apart from
-# `citation_sources` because it asserts no citation edge, and that map is
-# contractually the set of indexes an edge may cite.
+# Crossref's title/date comparison role on a work page. It is declared apart
+# from `citation_sources`, which is keyed by machine identifier for the same
+# indexes and also carries Crossref's citation-edge role (see below).
 METADATA_SOURCES = {
     "openalex": {
         "id": "openalex",
@@ -982,6 +982,13 @@ def main() -> int:
             "url": "https://europepmc.org",
             "license": "CC BY (REST API, per-record licence as published)",
             "role": "citation edges",
+        },
+        "crossref": {
+            "id": "crossref",
+            "name": "Crossref",
+            "url": "https://www.crossref.org/",
+            "license": "bibliographic metadata only; no abstracts or full text",
+            "role": "citation edges asserted by the publisher-supplied reference list",
         },
     }
     _write(

@@ -57,7 +57,7 @@ def stage_provenance(conn) -> None:
     )
     conn.execute(
         "UPDATE citation SET sources = ? WHERE citing_id = 'W3' AND cited_id = 'W2'",
-        (json.dumps(["openalex", "opencitations", "europepmc"]),),
+        (json.dumps(["openalex", "opencitations", "europepmc", "crossref"]),),
     )
     conn.commit()
 
@@ -119,7 +119,7 @@ def main() -> int:
         }
         declarations = corpus.get("citation_sources", {})
         bad += check(
-            asserted_sources == set(declarations) == {"openalex", "opencitations", "europepmc"},
+            asserted_sources == set(declarations) == {"openalex", "opencitations", "europepmc", "crossref"},
             f"edge sources {sorted(asserted_sources)} do not join exactly to declarations "
             f"{sorted(declarations)}",
         )
