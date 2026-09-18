@@ -186,6 +186,25 @@ def work_head_metadata(w: dict, canonical: str) -> str:
     return "\n".join(tag for tag in citation if tag) + "\n" + json_ld(creative_work)
 
 
+def institution_head_metadata(i: dict, canonical: str) -> str:
+    """Organization metadata limited to the institution record's public identities."""
+    org = {
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        "@id": canonical,
+        "url": canonical,
+        "name": i["name"],
+    }
+    identities = []
+    if i.get("openalex_url"):
+        identities.append(i["openalex_url"])
+    if (i.get("metadata") or {}).get("ror"):
+        identities.append(i["metadata"]["ror"])
+    if identities:
+        org["sameAs"] = identities
+    return json_ld(org)
+
+
 def bibtex_escape(value) -> str:
     """Escape a UTF-8 value for a braced BibTeX field."""
     escaped = []
@@ -1317,6 +1336,7 @@ def render_institution(i: dict, payloads: dict, author_ids: set[str],
         description=f'{i["name"]}: affiliated authors, works, and a precomputed collaboration graph.',
         body=body,
         path=f"i/{iid}/",
+        extra_head=institution_head_metadata(i, canonical_url(f"i/{iid}/")),
     )
 
 
