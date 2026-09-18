@@ -80,6 +80,22 @@ RIS_TYPES = {
 }
 
 
+# Explicit OpenAlex work type -> schema.org @type mapping for JSON-LD.
+# Anything not listed here falls back to ScholarlyArticle.
+SCHEMA_TYPES = {
+    "dataset": "Dataset",
+    "preprint": "ScholarlyArticle",
+    "book": "Book",
+    "book-chapter": "Chapter",
+    "dissertation": "Thesis",
+    "report": "Report",
+    "software": "SoftwareSourceCode",
+    "other": "CreativeWork",
+    "paratext": "CreativeWork",
+    "reference-entry": "CreativeWork",
+}
+
+
 def e(s) -> str:
     return html.escape(str(s if s is not None else ""), quote=True)
 
@@ -135,7 +151,7 @@ def work_head_metadata(w: dict, canonical: str) -> str:
 
     creative_work = {
         "@context": "https://schema.org",
-        "@type": "CreativeWork",
+        "@type": SCHEMA_TYPES.get(w.get("type"), "ScholarlyArticle"),
         "@id": canonical,
         "url": canonical,
     }
