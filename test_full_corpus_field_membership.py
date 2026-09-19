@@ -3,9 +3,11 @@
 
 test_full_corpus_render.py already proves every anchor on the rendered site
 resolves somewhere; this test proves the narrower, work-page-specific claim
-that motivated t1: each of the 3,000 committed works gets exactly one Fields
-section, and the set of field keys those sections point at is exactly the
-set of fields/<key>/index.html directories the same build emitted.
+that motivated t1: the rendered work pages are exactly the works declared by
+works-index.json — by id, not by count — each of those 3,000 pages gets
+exactly one Fields section, and the set of field keys those sections point at
+is exactly the set of fields/<key>/index.html directories the same build
+emitted.
 """
 from __future__ import annotations
 
@@ -70,13 +72,25 @@ def built_field_keys(site: Path) -> set[str]:
 def main() -> int:
     try:
         with rendered_site() as site:
-            expected_count = len(json.loads((DATA / "works-index.json").read_text()))
-
-            work_dirs = sorted(p for p in (site / "w").iterdir() if p.is_dir())
-            pages = {p.name: (p / "index.html") for p in work_dirs if (p / "index.html").is_file()}
-            if len(pages) != expected_count:
+            works_index = json.loads((DATA / "works-index.json").read_text())
+            expected_ids = {w["id"] for w in works_index}
+            if len(expected_ids) != len(works_index):
                 raise AssertionError(
-                    f"rendered {len(pages)} work pages, works-index.json declares {expected_count}"
+                    f"works-index.json declares {len(works_index)} works but only "
+                    f"{len(expected_ids)} distinct ids"
+                )
+
+            pages = {
+                page.parent.name: page
+                for page in sorted((site / "w").glob("*/index.html"))
+            }
+            missing_ids = sorted(expected_ids - pages.keys())
+            unexpected_ids = sorted(pages.keys() - expected_ids)
+            if missing_ids or unexpected_ids:
+                raise AssertionError(
+                    f"rendered work pages do not match works-index.json "
+                    f"({len(pages)} rendered, {len(expected_ids)} declared); "
+                    f"missing={missing_ids[:10]}, unexpected={unexpected_ids[:10]}"
                 )
 
             build_keys = built_field_keys(site)
