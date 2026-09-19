@@ -1855,6 +1855,7 @@ def main() -> int:
             "works": len(works_index),
         }]
         field_works = {field_key: works_index}
+        legacy_fields = [field_key]
     elif exported_fields is None or not has_all_memberships:
         print("incomplete field export: need both fields-index.json and work fields arrays", file=sys.stderr)
         return 1
@@ -1866,6 +1867,7 @@ def main() -> int:
             ]
             for field in fields_index
         }
+        legacy_fields = []
     NAV_FIELDS = fields_index
 
     if SITE.exists():
@@ -1895,6 +1897,11 @@ def main() -> int:
 
     for shard in sorted((DATA / "works").glob("*.json")):
         for wid, w in json.loads(shard.read_text()).items():
+            # A legacy shard predates the membership export and carries no
+            # `fields` of its own, so its page would show no Fields section at
+            # all.  The sole normalized field owns every work there; an
+            # export-driven shard already has its own keys and keeps them.
+            w.setdefault("fields", legacy_fields)
             work_raw[wid] = w.get("raw")
             total += write(
                 f"w/{wid}/index.html",
