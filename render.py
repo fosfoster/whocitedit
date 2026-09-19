@@ -921,6 +921,7 @@ CITATION_SOURCE_NAMES = {
     "opencitations": "OpenCitations",
     "europepmc": "Europe PMC",
     "crossref": "Crossref",
+    "arxiv": "arXiv",
 }
 
 CITATION_SOURCE_ONLY_LABELS = {
@@ -928,6 +929,7 @@ CITATION_SOURCE_ONLY_LABELS = {
     "opencitations": "OpenCitations only — unconfirmed by OpenAlex",
     "europepmc": "Europe PMC only",
     "crossref": "Crossref only — unconfirmed by OpenAlex",
+    "arxiv": "arXiv only — unconfirmed by OpenAlex",
 }
 
 

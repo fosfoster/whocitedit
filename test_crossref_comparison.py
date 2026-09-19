@@ -275,8 +275,9 @@ def main() -> int:
         crossref_role = (corpus.get("metadata_sources") or {}).get("crossref", {}).get("role", "")
         bad += check("title" in crossref_role and "date" in crossref_role,
                      f"corpus.json does not declare Crossref's title/date comparison role: {crossref_role!r}")
-        bad += check(set(corpus["citation_sources"]) == {"openalex", "opencitations", "europepmc", "crossref"},
-                     "citation-edge source declarations do not match the four declared indexes")
+        bad += check(set(corpus["citation_sources"]) ==
+                     {"openalex", "opencitations", "europepmc", "crossref", "arxiv"},
+                     "citation-edge source declarations do not match the five declared indexes")
 
         for wid in expected:
             bad += check(len(works[wid]["authors"]) == (2 if wid == "W1" else 1),

@@ -23,6 +23,7 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
+import arxiv
 import crossref
 import graph
 import identity
@@ -78,6 +79,16 @@ def _is_author(obj: dict) -> bool:
 
 def _is_crossref_work_envelope(payload: dict) -> bool:
     return payload.get("message-type") == "work" and isinstance(payload.get("message"), dict)
+
+
+def _is_arxiv_feed(payload: dict) -> bool:
+    """An arXiv Atom-derived payload: a `feed` dict holding an `entry` list.
+
+    No OpenAlex `results` payload, Crossref work envelope, or Europe PMC
+    `resultList`/`referenceList` payload satisfies this.
+    """
+    feed = payload.get("feed")
+    return isinstance(feed, dict) and isinstance(feed.get("entry"), list)
 
 
 def _is_europepmc_search(payload: dict) -> bool:
@@ -151,6 +162,7 @@ def load(conn) -> dict:
     coci_assertions: list[tuple[str, str]] = []
     crossref_envelopes: list[tuple[str, dict]] = []
     crossref_reference_assertions: list[tuple[str, str]] = []
+    arxiv_reference_assertions: list[tuple[str, str]] = []
     europepmc_search_dois: dict[tuple[str, str], str] = {}
     europepmc_reference_assertions: list[tuple[tuple[str, str], str]] = []
     europepmc_results: list[tuple[str, dict]] = []
@@ -185,6 +197,21 @@ def load(conn) -> dict:
             if citing_doi:
                 crossref_reference_assertions.extend(
                     (citing_doi, cited_doi) for cited_doi in crossref.reference_dois(payload)
+                )
+            continue
+        # arXiv's Atom feed names each entry's own DOI directly, like Crossref,
+        # so no key resolution is needed. Reconcile after every OpenAlex work
+        # is inserted below, exactly like the Crossref envelopes above.
+        if _is_arxiv_feed(payload):
+            for entry in payload["feed"]["entry"]:
+                if not isinstance(entry, dict):
+                    continue
+                citing_doi = entry.get("doi")
+                if not citing_doi:
+                    continue
+                entry_payload = {"feed": {"entry": [entry]}}
+                arxiv_reference_assertions.extend(
+                    (citing_doi, cited_doi) for cited_doi in arxiv.reference_dois(entry_payload)
                 )
             continue
         # Europe PMC's DOI search echoes the (source, id) pair its references
@@ -235,7 +262,7 @@ def load(conn) -> dict:
     stats["citations"] = _insert_citations(
         conn, references, coci_assertions,
         europepmc_search_dois, europepmc_reference_assertions,
-        crossref_reference_assertions,
+        crossref_reference_assertions, arxiv_reference_assertions,
     )
     stats["crossref_assertions"] = _insert_crossref_assertions(conn, crossref_envelopes)
     stats["europepmc_assertions"] = _insert_europepmc_assertions(conn, europepmc_results)
@@ -442,7 +469,8 @@ def _insert_citations(conn, references: dict[str, list[str]],
                       coci_assertions: list[tuple[str, str]],
                       europepmc_search_dois: dict[tuple[str, str], str],
                       europepmc_reference_assertions: list[tuple[tuple[str, str], str]],
-                      crossref_reference_assertions: list[tuple[str, str]]) -> int:
+                      crossref_reference_assertions: list[tuple[str, str]],
+                      arxiv_reference_assertions: list[tuple[str, str]]) -> int:
     in_corpus = {r["id"] for r in conn.execute("SELECT id FROM work")}
     assertions: dict[tuple[str, str], set[str]] = {}
 
@@ -482,6 +510,15 @@ def _insert_citations(conn, references: dict[str, list[str]],
         cited = doi_to_work.get(_normalized_doi(cited_doi))
         if citing and cited and citing != cited:
             assertions.setdefault((citing, cited), set()).add("crossref")
+
+    # An arXiv Atom entry's `references` array names cited DOIs directly, just
+    # like Crossref's `reference` array. Resolve both ends against the same
+    # in-corpus DOI index and drop an unresolved DOI or self-pair silently.
+    for citing_doi, cited_doi in arxiv_reference_assertions:
+        citing = doi_to_work.get(_normalized_doi(citing_doi))
+        cited = doi_to_work.get(_normalized_doi(cited_doi))
+        if citing and cited and citing != cited:
+            assertions.setdefault((citing, cited), set()).add("arxiv")
 
     rows = [
         (citing, cited, graph.encode_sources(list(sources)))
