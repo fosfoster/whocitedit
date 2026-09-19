@@ -1840,6 +1840,7 @@ def main() -> int:
     membership_presence = ["fields" in work for work in works_index]
     has_any_memberships = any(membership_presence)
     has_all_memberships = all(membership_presence)
+    legacy_sole_field = None
     if exported_fields is None and not has_any_memberships:
         # Checked-in releases predating the membership export have only the
         # legacy top-level definition.  It is one field, and every indexed work
@@ -1853,6 +1854,7 @@ def main() -> int:
             "works": len(works_index),
         }]
         field_works = {field_key: works_index}
+        legacy_sole_field = field_key
     elif exported_fields is None or not has_all_memberships:
         print("incomplete field export: need both fields-index.json and work fields arrays", file=sys.stderr)
         return 1
@@ -1894,6 +1896,8 @@ def main() -> int:
     for shard in sorted((DATA / "works").glob("*.json")):
         for wid, w in json.loads(shard.read_text()).items():
             work_raw[wid] = w.get("raw")
+            if legacy_sole_field is not None and "fields" not in w:
+                w["fields"] = [legacy_sole_field]
             total += write(
                 f"w/{wid}/index.html",
                 render_work(w, author_names, titles, payloads, quality_notes, topic_ids),
