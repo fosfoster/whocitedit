@@ -96,6 +96,32 @@ SCHEMA_TYPES = {
 }
 
 
+# Every exported work type -> a CSL 1.0.2 item type. CSL's vocabulary is narrower
+# than OpenAlex's, so several work types share the nearest CSL type; `document` is
+# CSL's own generic item type and carries anything we do not recognise.
+CSL_TYPES = {
+    "article": "article-journal",
+    "book": "book",
+    "book-chapter": "chapter",
+    "book-review": "review-book",
+    "conference-abstract": "paper-conference",
+    "conference-paper": "paper-conference",
+    "data-paper": "article-journal",
+    "dataset": "dataset",
+    "dissertation": "thesis",
+    "editorial": "article-journal",
+    "erratum": "article-journal",
+    "other": "document",
+    "paratext": "document",
+    "preprint": "article",
+    "reference-entry": "entry-encyclopedia",
+    "report": "report",
+    "review": "review",
+    "software": "software",
+    "software-paper": "article-journal",
+}
+
+
 def e(s) -> str:
     return html.escape(str(s if s is not None else ""), quote=True)
 
@@ -294,6 +320,16 @@ def _csl_doi(value) -> str | None:
         return normalize_doi(value)
     except ValueError:
         return None
+
+
+def csl_type(value) -> str:
+    """The CSL item type for an exported work type, ``document`` for anything else.
+
+    A missing or unrecognised work type is not an error here: CSL requires every
+    item to carry a type, and `document` is the generic one it provides for a
+    work whose kind is unknown.
+    """
+    return CSL_TYPES.get(value, "document")
 
 
 def work_csl_json(w: dict) -> dict:
