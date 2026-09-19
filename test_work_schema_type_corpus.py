@@ -11,7 +11,18 @@ import render
 ROOT = Path(__file__).parent
 WORKS_DIR = ROOT / "web" / "data" / "works"
 
-KNOWN_SCHEMA_TYPES = set(render.SCHEMA_TYPES.values()) | {"ScholarlyArticle"}
+# Spelled out rather than derived from render.SCHEMA_TYPES so a typo or a
+# non-schema.org value added to that mapping fails here instead of passing.
+KNOWN_SCHEMA_TYPES = {
+    "ScholarlyArticle",
+    "Dataset",
+    "Book",
+    "Chapter",
+    "Thesis",
+    "Report",
+    "SoftwareSourceCode",
+    "CreativeWork",
+}
 
 
 def check(condition, message):
@@ -30,6 +41,10 @@ def main() -> int:
     bad = 0
     type_counts = Counter()
     unmapped_types = set()
+
+    for work_type, schema_type_name in sorted(render.SCHEMA_TYPES.items()):
+        bad += check(schema_type_name in KNOWN_SCHEMA_TYPES,
+                     f"SCHEMA_TYPES[{work_type!r}] = {schema_type_name!r} is not a known schema.org type")
 
     paths = sorted(WORKS_DIR.glob("*.json"))
     bad += check(bool(paths), "no work shards found in web/data/works")
