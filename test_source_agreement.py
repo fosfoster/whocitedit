@@ -132,6 +132,16 @@ def main() -> int:
         "title_comparison_status must still treat the OpenAlex placeholder as unavailable, not disagree",
     )
     bad += check(
+        derive.title_comparison_status("Some Title", f"{derive.NO_TITLE_PREFIX} — no title]") == "disagree",
+        "only the OpenAlex side carries our placeholder: a Crossref title starting with the same "
+        "text stays a comparable assertion and must still disagree",
+    )
+    bad += check(
+        derive.title_comparison_status(None, "Some Title") == "unavailable"
+        and derive.title_comparison_status("Some Title", None) == "unavailable",
+        "title_comparison_status must still be unavailable when either side asserts nothing",
+    )
+    bad += check(
         derive.date_comparison("2021-07-04", "2021") == ("agree", "year"),
         "date_comparison must still compare only as deep as the shallower source",
     )

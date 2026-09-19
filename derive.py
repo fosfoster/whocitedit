@@ -626,24 +626,35 @@ def normalize_title(value: str) -> str:
     return " ".join(re.sub(r"[^a-z0-9]+", " ", folded.casefold()).split())
 
 
+def _title_agreement(titles: list[str]) -> str:
+    """Agreement over titles already screened down to real assertions."""
+    if len(titles) < 2:
+        return "unavailable"
+    return "agree" if len({normalize_title(t) for t in titles}) == 1 else "disagree"
+
+
 def title_comparison_status_n(titles: list[str | None]) -> str:
     """N-source title agreement, folded through `normalize_title`.
 
-    A title is comparable only if it is present and is not the OpenAlex
-    placeholder for a missing title (`NO_TITLE_PREFIX`) -- that placeholder
-    is ours, not an assertion, so it must never register as a disagreement.
-    Fewer than two comparable titles is `unavailable`; all of them matching
-    after normalization is `agree`; any mismatch is `disagree`.
+    A title is comparable only if it is present and is not our placeholder
+    for a missing title (`NO_TITLE_PREFIX`) -- that placeholder is ours, not
+    an assertion, so it must never register as a disagreement. Fewer than
+    two comparable titles is `unavailable`; all of them matching after
+    normalization is `agree`; any mismatch is `disagree`.
     """
-    comparable = [t for t in titles if t and not t.startswith(NO_TITLE_PREFIX)]
-    if len(comparable) < 2:
-        return "unavailable"
-    normalized = {normalize_title(t) for t in comparable}
-    return "agree" if len(normalized) == 1 else "disagree"
+    return _title_agreement([t for t in titles if t and not t.startswith(NO_TITLE_PREFIX)])
 
 
 def title_comparison_status(openalex_title: str | None, crossref_title: str | None) -> str:
-    return title_comparison_status_n([openalex_title, crossref_title])
+    """Two-source title status, OpenAlex against Crossref.
+
+    Only the OpenAlex title can be our missing-title placeholder, so only
+    that side is screened for it: a Crossref title that happens to begin
+    with the same text is a real assertion and still compares.
+    """
+    if openalex_title and openalex_title.startswith(NO_TITLE_PREFIX):
+        return "unavailable"
+    return _title_agreement([t for t in (openalex_title, crossref_title) if t])
 
 
 DATE_PRECISION = ("year", "month", "day")
