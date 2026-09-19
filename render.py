@@ -344,7 +344,7 @@ def render_ris(w: dict) -> str:
 
 
 def render_csl_json(w: dict) -> str:
-    """The CSL-JSON item for a work, serialized as the ``citation.json`` artifact.
+    """The CSL-JSON item for a work, serialized as the ``citation.csl.json`` artifact.
 
     ensure_ascii=False keeps non-Latin titles as literal UTF-8 rather than
     \\uXXXX escapes; sort_keys keeps two renders of the same work byte-identical.
@@ -1909,7 +1909,7 @@ def main() -> int:
             )
             total += write(f"w/{wid}/citation.bib", work_bibtex(w))
             total += write(f"w/{wid}/citation.ris", render_ris(w))
-            total += write(f"w/{wid}/citation.json", render_csl_json(w))
+            total += write(f"w/{wid}/citation.csl.json", render_csl_json(w))
             n += 1
 
     for shard in sorted((DATA / "authors").glob("*.json")):

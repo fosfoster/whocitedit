@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline coverage for the per-work citation.json CSL-JSON artifact."""
+"""Offline coverage for the per-work citation.csl.json CSL-JSON artifact."""
 import json
 import shutil
 import sys
@@ -63,7 +63,7 @@ def main() -> int:
         bad += check(render.main() == 0, "synthetic render failed")
 
         work_ids = {"W1", "W2", "W3"}
-        csl_paths = {wid: render.SITE / "w" / wid / "citation.json" for wid in work_ids}
+        csl_paths = {wid: render.SITE / "w" / wid / "citation.csl.json" for wid in work_ids}
         for wid, path in csl_paths.items():
             bad += check(path.exists(), f"missing CSL-JSON artifact for {wid}")
 
@@ -74,7 +74,7 @@ def main() -> int:
         )
         for wdir in all_work_dirs:
             extra = {p.name for p in wdir.iterdir()} - {
-                "index.html", "citation.bib", "citation.ris", "citation.json",
+                "index.html", "citation.bib", "citation.ris", "citation.csl.json",
             }
             bad += check(not extra, f"stray artifacts in w/{wdir.name}: {extra}")
 
@@ -83,7 +83,7 @@ def main() -> int:
         for wid, raw in first_bytes.items():
             parsed = json.loads(raw.decode("utf-8"))
             bad += check(parsed == render.work_csl_json(load_work(data, wid)),
-                         f"{wid} citation.json does not match render.work_csl_json")
+                         f"{wid} citation.csl.json does not match render.work_csl_json")
             bad += check(parsed.get("id") == wid, f"{wid} CSL-JSON id does not match work id")
 
         parsed_w1 = json.loads(first_bytes["W1"].decode("utf-8"))
