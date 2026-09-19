@@ -626,12 +626,35 @@ def normalize_title(value: str) -> str:
     return " ".join(re.sub(r"[^a-z0-9]+", " ", folded.casefold()).split())
 
 
-def title_comparison_status(openalex_title: str | None, crossref_title: str | None) -> str:
-    # The OpenAlex placeholder for a missing title is ours, not the source's:
-    # comparing it would report a disagreement OpenAlex never asserted.
-    if not openalex_title or openalex_title.startswith(NO_TITLE_PREFIX) or not crossref_title:
+def _title_agreement(titles: list[str]) -> str:
+    """Agreement over titles already screened down to real assertions."""
+    if len(titles) < 2:
         return "unavailable"
-    return "agree" if normalize_title(openalex_title) == normalize_title(crossref_title) else "disagree"
+    return "agree" if len({normalize_title(t) for t in titles}) == 1 else "disagree"
+
+
+def title_comparison_status_n(titles: list[str | None]) -> str:
+    """N-source title agreement, folded through `normalize_title`.
+
+    A title is comparable only if it is present and is not our placeholder
+    for a missing title (`NO_TITLE_PREFIX`) -- that placeholder is ours, not
+    an assertion, so it must never register as a disagreement. Fewer than
+    two comparable titles is `unavailable`; all of them matching after
+    normalization is `agree`; any mismatch is `disagree`.
+    """
+    return _title_agreement([t for t in titles if t and not t.startswith(NO_TITLE_PREFIX)])
+
+
+def title_comparison_status(openalex_title: str | None, crossref_title: str | None) -> str:
+    """Two-source title status, OpenAlex against Crossref.
+
+    Only the OpenAlex title can be our missing-title placeholder, so only
+    that side is screened for it: a Crossref title that happens to begin
+    with the same text is a real assertion and still compares.
+    """
+    if openalex_title and openalex_title.startswith(NO_TITLE_PREFIX):
+        return "unavailable"
+    return _title_agreement([t for t in (openalex_title, crossref_title) if t])
 
 
 DATE_PRECISION = ("year", "month", "day")
@@ -643,18 +666,26 @@ def _date_parts(value: str | None) -> tuple[int, ...]:
     return tuple(int(p) for p in value.strip().split("-"))
 
 
-def date_comparison(openalex_date: str | None, crossref_date: str | None) -> tuple[str, str | None]:
-    """Compare two dates only as far as both sources actually went.
+def date_comparison_n(dates: list[str | None]) -> tuple[str, str | None]:
+    """N-source date agreement, compared only as deep as the shallowest asserting source went.
 
-    Returns (status, precision). A year-only Crossref date against a full
-    OpenAlex date is compared on the year alone and says so; it is never
-    expanded to a month and day nobody asserted.
+    Returns (status, precision). Fewer than two parseable dates is
+    `unavailable`. Otherwise every parseable date is compared down to the
+    coarsest precision among them -- a year-only date against two full
+    dates is compared at year precision and says so; it is never expanded
+    to a month and day nobody asserted.
     """
-    a, b = _date_parts(openalex_date), _date_parts(crossref_date)
-    depth = min(len(a), len(b))
-    if depth == 0:
+    comparable = [p for p in (_date_parts(d) for d in dates) if p]
+    if len(comparable) < 2:
         return "unavailable", None
-    return ("agree" if a[:depth] == b[:depth] else "disagree"), DATE_PRECISION[depth - 1]
+    depth = min(len(p) for p in comparable)
+    first = comparable[0][:depth]
+    status = "agree" if all(p[:depth] == first for p in comparable) else "disagree"
+    return status, DATE_PRECISION[depth - 1]
+
+
+def date_comparison(openalex_date: str | None, crossref_date: str | None) -> tuple[str, str | None]:
+    return date_comparison_n([openalex_date, crossref_date])
 
 
 def _normalize_venue(value: str) -> str:
@@ -742,19 +773,33 @@ def _insert_europepmc_assertions(conn, results: list[tuple[str, dict]]) -> int:
     return count
 
 
+def venue_comparison_status_n(candidates: list[tuple[str | None, ...]]) -> str:
+    """N-source venue agreement.
+
+    Each element of `candidates` is one source's venue forms -- typically a
+    long name and a short/abbreviated one, either or both of which may be
+    None. A source asserts if at least one of its forms is non-empty.
+    Agreement counts against any form, so a journal abbreviation from one
+    source matching another source's full name (or vice versa) is not
+    reported as a contradiction. Fewer than two asserting sources is
+    `unavailable`; every asserting source sharing at least one normalized
+    form in common with all the others is `agree`; otherwise `disagree`.
+    """
+    sets = []
+    for forms in candidates:
+        normalized = {_normalize_venue(v) for v in forms if v}
+        if normalized:
+            sets.append(normalized)
+    if len(sets) < 2:
+        return "unavailable"
+    common = set.intersection(*sets)
+    return "agree" if common else "disagree"
+
+
 def venue_comparison_status(
     openalex_venue: str | None, crossref_venue: str | None, crossref_short: str | None
 ) -> str:
-    """Compare OpenAlex's source name against Crossref's venue assertion.
-
-    Agreement counts against either the long or short Crossref container
-    title, so a journal abbreviation is not reported as a contradiction.
-    """
-    if not openalex_venue or not (crossref_venue or crossref_short):
-        return "unavailable"
-    normalized = _normalize_venue(openalex_venue)
-    candidates = {_normalize_venue(v) for v in (crossref_venue, crossref_short) if v}
-    return "agree" if normalized in candidates else "disagree"
+    return venue_comparison_status_n([(openalex_venue,), (crossref_venue, crossref_short)])
 
 
 # Crossref and OpenAlex use different, overlapping type vocabularies. Only
