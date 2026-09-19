@@ -164,6 +164,24 @@ def author_head_metadata(a: dict, canonical: str) -> str:
     return json_ld(person)
 
 
+def breadcrumb_json_ld(trail: list[tuple[str, str]]) -> str:
+    """BreadcrumbList metadata for an ordered sequence of (name, path) crumbs."""
+    breadcrumb = {
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+            {
+                "@type": "ListItem",
+                "position": position,
+                "name": name,
+                "item": canonical_url(path),
+            }
+            for position, (name, path) in enumerate(trail, start=1)
+        ],
+    }
+    return json_ld(breadcrumb)
+
+
 def work_head_metadata(w: dict, canonical: str) -> str:
     """Citation and CreativeWork metadata using only the exported work fields."""
     citation = [
@@ -1602,6 +1620,7 @@ def render_browse(kind: str, rows: list, corpus: dict) -> str:
         description=f"All {num(len(rows))} {title.lower()} in the {corpus_label(corpus)} corpus.",
         body=body,
         path=f"{kind}/",
+        extra_head=breadcrumb_json_ld([("Home", ""), (title, f"{kind}/")]),
     )
 
 
