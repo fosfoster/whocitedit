@@ -990,6 +990,13 @@ def main() -> int:
             "license": "bibliographic metadata only; no abstracts or full text",
             "role": "citation edges asserted by the publisher-supplied reference list",
         },
+        "arxiv": {
+            "id": "arxiv",
+            "name": "arXiv",
+            "url": "https://arxiv.org",
+            "license": "bibliographic metadata only; no abstracts or full text",
+            "role": "citation edges asserted by the author-supplied reference list",
+        },
     }
     by_index_count: dict[int, int] = {}
     single_index: dict[str, int] = {}
