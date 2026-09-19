@@ -186,7 +186,7 @@ concurrency: 1
 
 stop_loss:
   consecutive_failures: 12
-  # A real ceiling, unlike every other board on this fleet, which carry `0`
-  # (meaning none). A new board with no track record is exactly the one that
-  # should have a number here.
-  daily_usd: 40
+  # Disabled 2026-09-19: no daily spend ceiling on any board. 0 turns the
+  # check off entirely (charter.py: "0 disables it"); the consecutive-failure
+  # stop-loss above still runs, so a looping builder is still caught.
+  daily_usd: 0
