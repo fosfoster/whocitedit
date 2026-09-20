@@ -1487,7 +1487,7 @@ def render_topic(t: dict, payloads: dict, work_ids: set[str], author_ids: set[st
     )
 
 
-def render_home(corpus: dict, works: list, authors: list) -> str:
+def render_home(corpus: dict, works: list, authors: list, fields=None, field_works=None) -> str:
     c = corpus["counts"]
     top = "".join(
         f'<tr><td><a href="w/{e(w["id"])}/">{e(w["title"])}</a>'
@@ -1989,7 +1989,11 @@ def main() -> int:
         )
         n += 1
 
-    total += write("index.html", render_home(corpus, works_index, authors_index))
+    total += write(
+        "index.html",
+        render_home(corpus, works_index, authors_index,
+                    fields=fields_index, field_works=field_works),
+    )
     total += write("works/index.html", render_browse("works", works_index, corpus))
     total += write("fields/index.html", render_fields(fields_index))
     for field in fields_index:
