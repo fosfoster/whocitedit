@@ -351,12 +351,15 @@ def csl_type(value) -> str:
 
 
 def work_csl_json(w: dict) -> dict:
-    """CSL-JSON item for a work, omitting any field missing from the source."""
-    item: dict = {"id": w["id"]}
+    """CSL-JSON item for a work, omitting any other field missing from the source.
+
+    ``type`` is never omitted -- CSL requires every item to carry one -- so it
+    always goes through ``csl_type()``, which supplies the ``document``
+    fallback for a work type this site doesn't recognise.
+    """
+    item: dict = {"id": w["id"], "type": csl_type(w.get("type"))}
     if w.get("title"):
         item["title"] = w["title"]
-    if w.get("type"):
-        item["type"] = w["type"]
     authors = [{"literal": a["name"]} for a in w.get("authors") or [] if a.get("name")]
     if authors:
         item["author"] = authors
