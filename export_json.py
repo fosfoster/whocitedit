@@ -230,9 +230,10 @@ def _source_comparison(
     }
 
 
-# Crossref's title/date comparison role on a work page. It is declared apart
-# from `citation_sources`, which is keyed by machine identifier for the same
-# indexes and also carries Crossref's citation-edge role (see below).
+# Crossref's and Europe PMC's title/venue/date comparison role on a work page.
+# Declared apart from `citation_sources`, which is keyed by machine identifier
+# for the same indexes and also carries Crossref's and Europe PMC's
+# citation-edge roles (see below).
 METADATA_SOURCES = {
     "openalex": {
         "id": "openalex",
@@ -248,39 +249,90 @@ METADATA_SOURCES = {
         "license": "bibliographic metadata only; no abstracts or full text",
         "role": "title and publication-date comparison against the OpenAlex work record",
     },
+    "europepmc": {
+        "id": "europepmc",
+        "name": "Europe PMC",
+        "url": "https://europepmc.org",
+        "license": "CC BY (REST API, per-record licence as published)",
+        "role": "title, venue and publication-date comparison against the OpenAlex work record",
+    },
 }
 
 
 def _record_comparison(conn, row) -> dict | None:
-    """OpenAlex's title and date beside Crossref's, each named by its source and payload.
+    """OpenAlex's title, venue and date beside whichever of Crossref and Europe
+    PMC also assert them, each named by its source and payload.
 
     Additive only: the OpenAlex values here are the same ones the work carries
-    at the top level, restated so the reader can see both assertions and the
-    bytes each came from. Same earliest-by-raw_sha choice as the venue/type
-    comparison so the two panels describe one envelope.
+    at the top level, restated so the reader can see every assertion and the
+    bytes each came from. Same earliest-by-raw_sha choice per source as the
+    venue/type comparison, so each panel describes one envelope even when a
+    work carries several. A work with neither a Crossref nor a Europe PMC
+    assertion has nothing to compare and exports no block at all.
     """
-    assertion = conn.execute(
-        "SELECT raw_sha, title, published FROM crossref_work_assertion "
+    wid = row["id"]
+    crossref = conn.execute(
+        "SELECT raw_sha, title, venue, venue_short, published FROM crossref_work_assertion "
         "WHERE work_id = ? ORDER BY raw_sha LIMIT 1",
-        (row["id"],),
+        (wid,),
     ).fetchone()
-    if assertion is None:
+    europepmc = conn.execute(
+        "SELECT raw_sha, title, venue, venue_short, publication_date FROM europepmc_work_assertion "
+        "WHERE work_id = ? ORDER BY raw_sha LIMIT 1",
+        (wid,),
+    ).fetchone()
+    if crossref is None and europepmc is None:
         return None
+
     openalex_date = row["publication_date"] or (str(row["year"]) if row["year"] else None)
-    date_status, precision = derive.date_comparison(openalex_date, assertion["published"])
+
+    def source_entry(source: str, value, raw: str) -> dict:
+        return {"source": source, "value": value, "raw": raw}
+
+    title = {"openalex": source_entry("openalex", row["title"], row["raw_sha"])}
+    venue = {"openalex": source_entry("openalex", row["source_name"], row["raw_sha"])}
+    date = {"openalex": source_entry("openalex", openalex_date, row["raw_sha"])}
+
+    titles = [row["title"]]
+    venues = [(row["source_name"],)]
+    dates = [openalex_date]
+
+    present_sources = []
+    if crossref is not None:
+        present_sources.append("crossref")
+        title["crossref"] = source_entry("crossref", crossref["title"], crossref["raw_sha"])
+        venue["crossref"] = source_entry(
+            "crossref", crossref["venue"] or crossref["venue_short"], crossref["raw_sha"]
+        )
+        date["crossref"] = source_entry("crossref", crossref["published"], crossref["raw_sha"])
+        titles.append(crossref["title"])
+        venues.append((crossref["venue"], crossref["venue_short"]))
+        dates.append(crossref["published"])
+
+    if europepmc is not None:
+        present_sources.append("europepmc")
+        title["europepmc"] = source_entry("europepmc", europepmc["title"], europepmc["raw_sha"])
+        venue["europepmc"] = source_entry(
+            "europepmc", europepmc["venue"] or europepmc["venue_short"], europepmc["raw_sha"]
+        )
+        date["europepmc"] = source_entry("europepmc", europepmc["publication_date"], europepmc["raw_sha"])
+        titles.append(europepmc["title"])
+        venues.append((europepmc["venue"], europepmc["venue_short"]))
+        dates.append(europepmc["publication_date"])
+
+    title["status"] = derive.title_comparison_status_n(titles)
+    venue["status"] = derive.venue_comparison_status_n(venues)
+    date_status, precision = derive.date_comparison_n(dates)
+    date["status"], date["precision"] = date_status, precision
+
+    names = " and ".join(METADATA_SOURCES[s]["name"] for s in present_sources)
+    role = f"{names} title/venue/date comparison against the OpenAlex work record"
+
     return {
-        "role": METADATA_SOURCES["crossref"]["role"],
-        "title": {
-            "status": derive.title_comparison_status(row["title"], assertion["title"]),
-            "openalex": {"source": "openalex", "value": row["title"], "raw": row["raw_sha"]},
-            "crossref": {"source": "crossref", "value": assertion["title"], "raw": assertion["raw_sha"]},
-        },
-        "date": {
-            "status": date_status,
-            "precision": precision,
-            "openalex": {"source": "openalex", "value": openalex_date, "raw": row["raw_sha"]},
-            "crossref": {"source": "crossref", "value": assertion["published"], "raw": assertion["raw_sha"]},
-        },
+        "role": role,
+        "title": title,
+        "venue": venue,
+        "date": date,
     }
 
 
