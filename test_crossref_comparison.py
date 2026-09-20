@@ -103,6 +103,9 @@ WORKS = {
     "W3": ("10.5555/w3", "Partial Date Work", 2021, "2021-07-04"),
     # Crossref supplies neither title nor date
     "W4": ("10.5555/w4", "Missing Field Work", 2018, "2018-02-02"),
+    # Europe PMC only: no Crossref envelope at all, so its field blocks must
+    # lack a "crossref" key entirely rather than carry one with null values
+    "W5": ("10.5555/w5", "Europe PMC Only Work", 2022, "2022-05-05"),
 }
 
 ENVELOPES = {
@@ -111,6 +114,13 @@ ENVELOPES = {
     "W3": crossref_envelope("10.5555/w3", "Partial Date Work", [2021]),
     "W4": crossref_envelope("10.5555/w4"),
     "outside": crossref_envelope("10.5555/not-in-corpus", "Nowhere Work", [2020, 1, 1]),
+}
+
+EUROPEPMC_RESULT = {
+    "doi": "10.5555/w5",
+    "title": "Europe PMC Title For W5",
+    "journalInfo": {"journal": {"title": "Europe PMC Journal"}},
+    "firstPublicationDate": "2022-05-06",
 }
 
 
@@ -126,6 +136,9 @@ def stage(tmp: Path) -> dict[str, str]:
         )
     for key, envelope in ENVELOPES.items():
         shas[f"crossref-{key}"] = store_payload(tmp, envelope, f"file://crossref-{key}")
+    shas["europepmc-W5"] = store_payload(
+        tmp, {"resultList": {"result": [EUROPEPMC_RESULT]}}, "file://europepmc-W5"
+    )
     return shas
 
 
@@ -202,7 +215,7 @@ def main() -> int:
         authors = {r["id"]: r["display_name"] for r in conn.execute("SELECT id, display_name FROM author")}
         bad += check(authors == {"A1": "Author A1", "A2": "Author A2"}, f"author identities changed: {authors}")
         authorships = conn.execute("SELECT COUNT(*) c FROM authorship").fetchone()["c"]
-        bad += check(authorships == 5, f"authorship count changed to {authorships}")
+        bad += check(authorships == 6, f"authorship count changed to {authorships}")
 
         derive.score_quality(conn)
         derive.score_identities(conn)
@@ -260,6 +273,25 @@ def main() -> int:
             bad += check("comparison" in comparison.get("role", ""),
                          f"{wid} comparison does not state Crossref's role")
 
+        # W5 has no Crossref assertion at all, only Europe PMC: its field
+        # blocks must omit the "crossref" key entirely rather than crash or
+        # carry one with null values, and must carry venue and europepmc.
+        w5_comparison = works["W5"]["record_comparison"]
+        bad += check(w5_comparison is not None, "W5 exported no record comparison")
+        for field in ("title", "venue", "date"):
+            bad += check("crossref" not in w5_comparison[field],
+                         f"W5 {field} comparison carries a crossref entry despite no Crossref assertion")
+            bad += check("europepmc" in w5_comparison[field],
+                         f"W5 {field} comparison is missing its Europe PMC assertion")
+            bad += check(w5_comparison[field]["europepmc"]["raw"] == shas["europepmc-W5"],
+                         f"W5 {field} Europe PMC assertion names the wrong payload")
+        bad += check(w5_comparison["title"]["europepmc"]["value"] == "Europe PMC Title For W5",
+                     "W5's asserted Europe PMC title was not exported as asserted")
+        bad += check(w5_comparison["venue"]["openalex"]["value"] == "Journal of Testing",
+                     "W5's OpenAlex venue assertion changed")
+        bad += check(w5_comparison["venue"]["europepmc"]["value"] == "Europe PMC Journal",
+                     "W5's asserted Europe PMC venue was not exported as asserted")
+
         bad += check(works["W1"]["record_comparison"]["title"]["crossref"]["value"] == "Deep Learning & Cats.",
                      "W1's asserted Crossref title was exported normalized rather than as asserted")
         bad += check(works["W3"]["record_comparison"]["date"]["crossref"]["value"] == "2021",
@@ -267,10 +299,13 @@ def main() -> int:
         bad += check(works["W4"]["record_comparison"]["title"]["crossref"]["value"] is None
                      and works["W4"]["record_comparison"]["date"]["crossref"]["value"] is None,
                      "W4's missing Crossref fields were exported as something other than null")
+        crossref_shas_in_use = {
+            w["record_comparison"]["title"]["crossref"]["raw"]
+            for w in works.values()
+            if w.get("record_comparison") and "crossref" in w["record_comparison"]["title"]
+        }
         bad += check(shas["crossref-outside"] in payloads
-                     and not any(sha == shas["crossref-outside"]
-                                 for w in works.values() if w.get("record_comparison")
-                                 for sha in (w["record_comparison"]["title"]["crossref"]["raw"],)),
+                     and shas["crossref-outside"] not in crossref_shas_in_use,
                      "the unmatched-DOI envelope was attached to a work")
         crossref_role = (corpus.get("metadata_sources") or {}).get("crossref", {}).get("role", "")
         bad += check("title" in crossref_role and "date" in crossref_role,
@@ -325,6 +360,16 @@ def main() -> int:
         bad += check(">2021<" in (site / "w" / "W3" / "index.html").read_text()
                      or "2021 <span" in (site / "w" / "W3" / "index.html").read_text(),
                      "W3 page does not show the year-only Crossref date")
+
+        # W5's page must render without raising despite no Crossref entry
+        # (asserted above via render.main() == 0), and must show the venue
+        # block plus the Europe PMC assertion.
+        w5_page = (site / "w" / "W5" / "index.html").read_text()
+        bad += check("<span>Venue</span>" in w5_page, "W5 page has no venue comparison row")
+        bad += check("<b>Europe PMC</b>:" in w5_page, "W5 page does not label the Europe PMC assertion")
+        bad += check("Europe PMC Journal" in w5_page, "W5 page does not show Europe PMC's asserted venue")
+        bad += check("Europe PMC Title For W5" in w5_page, "W5 page does not show Europe PMC's asserted title")
+        bad += check(shas["europepmc-W5"] in w5_page, "W5 page does not show the Europe PMC payload hash")
     finally:
         (derive.RAW, derive.MANIFEST, derive._payloads,
          export_json.OUT, export_json.DB_PATH, export_json.ROOT,
