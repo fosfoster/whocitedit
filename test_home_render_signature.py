@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
 """A single-field corpus renders the same home page it always did.
 
-Two guarantees, against the real ``render.py`` rather than a stub, driven by
-one ``render.main()`` over the committed release's shape -- one top-level
-definition, no ``fields-index.json``, no ``fields`` on any index row.
+Two guarantees, against the real ``render.py`` rather than a stub.
 
-1. BYTE IDENTITY.  The five-argument ``render_home`` call ``main()`` actually
-   makes -- its own ``fields_index``/``field_works``, captured off the call
-   rather than rebuilt here -- returns bytes identical to the legacy
-   three-argument call on the same corpus.  One field is not a reason to
-   render anything new.
-2. NO PER-FIELD SECTION MARKUP.  The home page that render writes carries
-   nothing field-scoped outside the chrome field navigation every page has:
-   no second link to a ``fields/<key>/`` page, and the field's key nowhere on
-   it.  A per-field summary section cannot exist without one of those.
+1. BYTE IDENTITY.  ``render_home`` called with the new five arguments returns
+   bytes identical to the legacy three-argument call on the same single-field
+   corpus.  Twice: once for the fixture ``render.main()`` is driven over here,
+   whose ``fields_index``/``field_works`` are captured off main()'s own call
+   rather than rebuilt, and once for the committed release in ``web/data/``,
+   which is still that shape and is the home page the site serves.  One field
+   is not a reason to render anything new.
+2. NO PER-FIELD SECTION MARKUP.  The home page a legacy full render writes
+   carries nothing field-scoped outside the field navigation every page's
+   chrome has: no second link to a ``fields/<key>/`` page, the field's key
+   nowhere on it, no field-scoped class.  A per-field summary section cannot
+   exist without one of those.
 """
 import inspect
+import json
 import re
 import shutil
 import sys
@@ -25,6 +27,11 @@ from pathlib import Path
 import corpus_contract
 import render
 from test_legacy_field_membership import index_row, write_fixture
+
+
+ROOT = Path(__file__).parent
+DATA = ROOT / "web" / "data"
+ASSETS = ROOT / "web" / "assets"
 
 
 def check(condition, message):
@@ -69,8 +76,10 @@ def main() -> int:
     tmp = Path(tempfile.mkdtemp())
     saved = (render.DATA, render.SITE, render.ASSETS, getattr(render, "NAV_FIELDS", []))
     try:
-        render.ASSETS = Path(__file__).parent / "web" / "assets"
+        render.ASSETS = ASSETS
 
+        # The committed release's shape: one top-level definition, no
+        # fields-index.json, no `fields` on any works-index row.
         definition = {
             "name": "Artificial Intelligence & Robotics",
             "description": "One legacy field.",
@@ -97,7 +106,7 @@ def main() -> int:
         if not calls:
             return 1
 
-        # (a) The same call, both signatures.
+        # (a) BYTE IDENTITY, on the corpus main() just rendered.
         passed = calls[0].arguments
         bad += check("fields_index" in passed and "field_works" in passed,
                      "render.main() still calls render_home with the legacy three "
@@ -105,6 +114,7 @@ def main() -> int:
         if "fields_index" not in passed or "field_works" not in passed:
             return 1
 
+        corpus, indexed, authors = passed["corpus"], passed["works"], passed["authors"]
         fields_index, field_works = passed["fields_index"], passed["field_works"]
         bad += check([field["key"] for field in fields_index] == [legacy_key],
                      "a legacy corpus did not reach render_home as one normalized "
@@ -112,19 +122,19 @@ def main() -> int:
         bad += check(sorted(field_works) == [legacy_key],
                      f"field_works is not the one legacy field: {sorted(field_works)}")
 
-        extended_call = render.render_home(*calls[0].args, **calls[0].kwargs).encode()
-        legacy_call = render.render_home(
-            passed["corpus"], passed["works"], passed["authors"]).encode()
+        five_argument = render.render_home(
+            corpus, indexed, authors, fields_index, field_works).encode()
+        three_argument = render.render_home(corpus, indexed, authors).encode()
         bad += check(
-            legacy_call == extended_call,
+            five_argument == three_argument,
             "single-field five-argument render_home is not byte-identical to the "
-            f"three-argument call -- {first_difference(legacy_call, extended_call)}",
+            f"three-argument call -- {first_difference(three_argument, five_argument)}",
         )
 
-        # (b) The legacy full render carries no per-field section markup.
+        # (b) NO PER-FIELD SECTION MARKUP in the legacy full render.
         home = (render.SITE / "index.html").read_text()
-        bad += check(home.encode() == extended_call,
-                     "the home page on disk is not what render_home returned")
+        bad += check(home.encode() == five_argument,
+                     "the home page on disk is not what the five-argument call returned")
         bad += check('<nav class="field-nav"' in home,
                      "fixture changed: the home page no longer carries the chrome field nav")
         body = without_field_nav(home)
@@ -136,6 +146,40 @@ def main() -> int:
         field_classes = re.findall(r'<\w+[^>]*class="[^"]*\bfield[\w-]*"', body)
         bad += check(not field_classes,
                      f"legacy home page carries field-scoped markup: {field_classes}")
+
+        # (a) again, on the committed release -- the home page the site serves.
+        # Driving main() over it would write all of web/site to reach one page,
+        # so the one-field slice comes straight from the corpus contract; the
+        # fixture above is what pins main() to building that same shape.
+        release = json.loads((DATA / "corpus.json").read_text())
+        release_works = json.loads((DATA / "works-index.json").read_text())
+        release_authors = json.loads((DATA / "authors-index.json").read_text())
+        normalized = corpus_contract.normalize(release["definition"])
+        bad += check(len(normalized) == 1
+                     and not (DATA / "fields-index.json").exists()
+                     and all("fields" not in row for row in release_works),
+                     "the committed release is no longer a legacy single-field corpus: "
+                     f"{sorted(normalized)}")
+        release_key, release_definition = next(iter(normalized.items()))
+        release_fields = [{
+            "key": release_key,
+            "name": release_definition["name"],
+            "description": release_definition.get("description"),
+            "works": len(release_works),
+        }]
+        render.NAV_FIELDS = release_fields
+        five_release = render.render_home(
+            release, release_works, release_authors,
+            release_fields, {release_key: release_works}).encode()
+        three_release = render.render_home(release, release_works, release_authors).encode()
+        bad += check(
+            five_release == three_release,
+            "the committed release's home page is not byte-identical under the two "
+            f"signatures -- {first_difference(three_release, five_release)}",
+        )
+        bad += check(release_key not in without_field_nav(five_release.decode()),
+                     f"the release home page names the field {release_key} outside "
+                     "the chrome nav")
     finally:
         render.DATA, render.SITE, render.ASSETS, render.NAV_FIELDS = saved
         shutil.rmtree(tmp, ignore_errors=True)
