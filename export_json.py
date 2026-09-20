@@ -997,6 +997,13 @@ def main() -> int:
             "license": "bibliographic metadata only; no abstracts or full text",
             "role": "citation edges asserted by the author-supplied reference list",
         },
+        "semanticscholar": {
+            "id": "semanticscholar",
+            "name": "Semantic Scholar",
+            "url": "https://www.semanticscholar.org",
+            "license": "bibliographic metadata only; no abstracts or full text",
+            "role": "citation edges asserted by the Semantic Scholar Academic Graph API",
+        },
     }
     by_index_count: dict[int, int] = {}
     single_index: dict[str, int] = {}
