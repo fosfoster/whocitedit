@@ -298,6 +298,18 @@ def bibtex_escape(value) -> str:
     return "".join(escaped)
 
 
+BIBTEX_TYPES = {
+    "book": "@book",
+    "dissertation": "@phdthesis",
+    "conference-paper": "@inproceedings",
+}
+
+
+def bibtex_type(work_type) -> str:
+    """The BibTeX entry type for a work's type, falling back to @misc."""
+    return BIBTEX_TYPES.get(work_type, "@misc")
+
+
 def work_bibtex(w: dict) -> str:
     """A small, deterministic citation from fields already rendered on a work page."""
     source = w.get("source") or {}
@@ -311,7 +323,8 @@ def work_bibtex(w: dict) -> str:
     ]
     rendered = [f"  {name} = {{{bibtex_escape(value)}}}" for name, value in fields if value]
     body = ",\n".join(rendered)
-    return f"@misc{{{w['id']},\n" + (f"{body}\n" if body else "") + "}\n"
+    entry_type = bibtex_type(w.get("type"))
+    return f"{entry_type}{{{w['id']},\n" + (f"{body}\n" if body else "") + "}\n"
 
 
 def _csl_issued(w: dict) -> dict | None:
