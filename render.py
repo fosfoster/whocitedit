@@ -992,6 +992,7 @@ CITATION_SOURCE_NAMES = {
     "europepmc": "Europe PMC",
     "crossref": "Crossref",
     "arxiv": "arXiv",
+    "semanticscholar": "Semantic Scholar",
 }
 
 CITATION_SOURCE_ONLY_LABELS = {
@@ -1000,6 +1001,7 @@ CITATION_SOURCE_ONLY_LABELS = {
     "europepmc": "Europe PMC only",
     "crossref": "Crossref only — unconfirmed by OpenAlex",
     "arxiv": "arXiv only — unconfirmed by OpenAlex",
+    "semanticscholar": "Semantic Scholar only — unconfirmed by OpenAlex",
 }
 
 
