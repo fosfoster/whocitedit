@@ -1,0 +1,18 @@
+{
+  "paperId": "0000000000000000000000000000000000000a",
+  "externalIds": {"DOI": "10.5555/source-paper"},
+  "references": [
+    {"paperId": "0000000000000000000000000000000000000b",
+     "externalIds": {"DOI": "10.5555/reference-one"}},
+    {"paperId": "0000000000000000000000000000000000000c",
+     "externalIds": {"DOI": "10.5555/reference-two"}},
+    {"paperId": "0000000000000000000000000000000000000d",
+     "externalIds": {}},
+    {"paperId": "0000000000000000000000000000000000000e",
+     "externalIds": {"DOI": "https://doi.org/10.5555/reference-one"}},
+    {"paperId": "0000000000000000000000000000000000000a",
+     "externalIds": {"DOI": "10.5555/source-paper"}},
+    {"paperId": "0000000000000000000000000000000000000f",
+     "externalIds": {"DOI": "10.5555/does-not-exist"}}
+  ]
+}
