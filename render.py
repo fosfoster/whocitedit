@@ -1487,7 +1487,11 @@ def render_topic(t: dict, payloads: dict, work_ids: set[str], author_ids: set[st
     )
 
 
-def render_home(corpus: dict, works: list, authors: list) -> str:
+def render_home(corpus: dict, works: list, authors: list,
+                fields_index: list | None = None, field_works: dict | None = None) -> str:
+    """The home page.  ``fields_index``/``field_works`` are the corpus field
+    slice the per-field summary sections will be built from; a single-field
+    corpus renders byte for byte what the three-argument call always did."""
     c = corpus["counts"]
     top = "".join(
         f'<tr><td><a href="w/{e(w["id"])}/">{e(w["title"])}</a>'
@@ -1989,7 +1993,8 @@ def main() -> int:
         )
         n += 1
 
-    total += write("index.html", render_home(corpus, works_index, authors_index))
+    total += write("index.html", render_home(corpus, works_index, authors_index,
+                                             fields_index, field_works))
     total += write("works/index.html", render_browse("works", works_index, corpus))
     total += write("fields/index.html", render_fields(fields_index))
     for field in fields_index:
