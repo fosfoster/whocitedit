@@ -323,7 +323,8 @@ def work_bibtex(w: dict) -> str:
     ]
     rendered = [f"  {name} = {{{bibtex_escape(value)}}}" for name, value in fields if value]
     body = ",\n".join(rendered)
-    return f"@misc{{{w['id']},\n" + (f"{body}\n" if body else "") + "}\n"
+    entry_type = bibtex_type(w.get("type"))
+    return f"{entry_type}{{{w['id']},\n" + (f"{body}\n" if body else "") + "}\n"
 
 
 def _csl_issued(w: dict) -> dict | None:
