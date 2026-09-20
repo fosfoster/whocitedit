@@ -1170,6 +1170,7 @@ def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
     links = [
         '<a href="citation.bib" download>Download BibTeX</a>',
         '<a href="citation.ris" download>Download RIS</a>',
+        '<a href="citation.csl.json" download>Download CSL-JSON</a>',
     ]
     if w["doi"]:
         links.append(f'<a href="{e(w["doi"])}">DOI</a>')
