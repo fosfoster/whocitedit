@@ -840,11 +840,14 @@ def crossref_comparison_html(comparison: dict | None) -> str:
 """
 
 
-SOURCE_LABELS = {"openalex": "OpenAlex", "crossref": "Crossref"}
+SOURCE_LABELS = {"openalex": "OpenAlex", "crossref": "Crossref", "europepmc": "Europe PMC"}
 
 
 def record_comparison_html(comparison: dict | None, payloads: dict) -> str:
-    """Both sources' title and date, each labelled, with the verdict beside them.
+    """Every present source's title, venue and date, each labelled, with the
+    verdict beside them. A field block may lack a `crossref` (or `europepmc`)
+    entry for a work that only one of those sources covers; `openalex` is
+    always present.
 
     The OpenAlex record above this panel is unchanged by anything here: a
     disagreement is shown, not resolved.
@@ -852,14 +855,16 @@ def record_comparison_html(comparison: dict | None, payloads: dict) -> str:
     if not comparison:
         return ""
     sections = []
-    for key, label in (("title", "Title"), ("date", "Publication date")):
+    for key, label in (("title", "Title"), ("venue", "Venue"), ("date", "Publication date")):
         field = comparison[key]
         status = field["status"]
         precision = field.get("precision")
         scope = f' <span class="faint">compared to the {e(precision)}</span>' if precision else ""
         rows = []
-        for source in ("openalex", "crossref"):
-            assertion = field[source]
+        for source in ("openalex", "crossref", "europepmc"):
+            assertion = field.get(source)
+            if assertion is None:
+                continue
             value = e(assertion["value"]) if assertion["value"] else '<span class="faint">not asserted</span>'
             fetched = payloads.get(assertion["raw"], {}).get("fetched_at", "unknown")
             rows.append(
