@@ -1491,7 +1491,27 @@ def render_topic(t: dict, payloads: dict, work_ids: set[str], author_ids: set[st
     )
 
 
-def render_home(corpus: dict, works: list, authors: list) -> str:
+def field_summary_section(field: dict, field_works: list) -> str:
+    """Render one field's home-page summary: name, count, link, own members."""
+    rows = "".join(
+        f'<tr><td><a href="w/{e(w["id"])}/">{e(w["title"])}</a>'
+        f'<br><span class="meta faint">{e(", ".join(w["authors"]))}</span></td>'
+        f'<td class="num">{e(w["year"] or "")}</td><td class="num">{num(w["cited"])}</td>'
+        f'<td class="num">{num(w["in_corpus_cited"])}</td></tr>'
+        for w in field_works
+    )
+    return f"""
+<h2><a href="fields/{e(field['key'])}/">{e(field['name'])}</a></h2>
+<p class="meta">{num(field["works"])} papers &middot; <a href="fields/{e(field['key'])}/">Browse this field</a></p>
+<div class="scroll"><table>
+  <thead><tr><th>Paper</th><th class="num">Year</th><th class="num">Cited</th><th class="num">In corpus</th></tr></thead>
+  <tbody>{rows}</tbody>
+</table></div>
+"""
+
+
+def render_home(corpus: dict, works: list, authors: list,
+                 fields_index: list | None = None, field_works: dict | None = None) -> str:
     c = corpus["counts"]
     top = "".join(
         f'<tr><td><a href="w/{e(w["id"])}/">{e(w["title"])}</a>'
@@ -1508,6 +1528,12 @@ def render_home(corpus: dict, works: list, authors: list) -> str:
         if w["year"]:
             year_counts[w["year"]] = year_counts.get(w["year"], 0) + 1
     low_pct = ident["low"] / max(sum(ident.values()), 1)
+    field_sections = ""
+    if fields_index and len(fields_index) > 1:
+        field_sections = "".join(
+            field_summary_section(field, field_works[field["key"]])
+            for field in fields_index
+        )
     body = f"""
 <h1>{TAGLINE}</h1>
 <p class="lede">{e(corpus_description(corpus))} Every page is precomputed and
@@ -1555,6 +1581,7 @@ def render_home(corpus: dict, works: list, authors: list) -> str:
   <thead><tr><th>Paper</th><th class="num">Year</th><th class="num">Cited</th><th class="num">In corpus</th></tr></thead>
   <tbody>{top}</tbody>
 </table></div>
+{field_sections}
 <p class="meta"><a href="works/">All {num(c["works"])} papers</a> &middot;
    <a href="fields/">Browse fields</a> &middot;
    <a href="authors/">All {num(c["authors"])} authors</a> &middot;
@@ -1997,7 +2024,7 @@ def main() -> int:
         )
         n += 1
 
-    total += write("index.html", render_home(corpus, works_index, authors_index))
+    total += write("index.html", render_home(corpus, works_index, authors_index, fields_index, field_works))
     total += write("works/index.html", render_browse("works", works_index, corpus))
     total += write("fields/index.html", render_fields(fields_index))
     for field in fields_index:
