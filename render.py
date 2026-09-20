@@ -1487,7 +1487,7 @@ def render_topic(t: dict, payloads: dict, work_ids: set[str], author_ids: set[st
     )
 
 
-def render_home(corpus: dict, works: list, authors: list) -> str:
+def render_home(corpus: dict, works: list, authors: list, fields=None, field_works=None) -> str:
     c = corpus["counts"]
     top = "".join(
         f'<tr><td><a href="w/{e(w["id"])}/">{e(w["title"])}</a>'
