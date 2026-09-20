@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 """A single-field corpus renders the same home page it always did.
 
-Two guarantees, against the real ``render.py`` rather than a stub:
+Two guarantees, against the real ``render.py`` rather than a stub, driven by
+one ``render.main()`` over the committed release's shape -- one top-level
+definition, no ``fields-index.json``, no ``fields`` on any index row.
 
-1. ``render_home`` called with the extended five-argument form and a
-   one-entry ``fields_index`` returns bytes identical to the legacy
-   three-argument call.  One field is not a reason to render anything new.
-2. A legacy full render through ``render.main()`` -- the committed release's
-   shape, with no ``fields-index.json`` and no ``fields`` on any row -- writes
-   a home page with no per-field section markup: outside the chrome field
-   navigation, nothing on it links a specific ``fields/<key>/`` page.
+1. BYTE IDENTITY.  The five-argument ``render_home`` call ``main()`` actually
+   makes -- its own ``fields_index``/``field_works``, captured off the call
+   rather than rebuilt here -- returns bytes identical to the legacy
+   three-argument call on the same corpus.  One field is not a reason to
+   render anything new.
+2. NO PER-FIELD SECTION MARKUP.  The home page that render writes carries
+   nothing field-scoped outside the chrome field navigation every page has:
+   no second link to a ``fields/<key>/`` page, and the field's key nowhere on
+   it.  A per-field summary section cannot exist without one of those.
 """
-import json
+import inspect
 import re
 import shutil
 import sys
@@ -35,6 +39,24 @@ def first_difference(left: bytes, right: bytes) -> str:
         if a != b:
             return f"byte {i}: {left[i:i + 60]!r} != {right[i:i + 60]!r}"
     return f"lengths differ: {len(left)} != {len(right)}"
+
+
+def recorded_render(calls: list) -> int:
+    """``render.main()`` with every ``render_home`` call recorded as bound
+    arguments, so the test asserts against the call main() makes rather than
+    against a second copy of how main() builds it."""
+    real = render.render_home
+    signature = inspect.signature(real)
+
+    def recording(*args, **kwargs):
+        calls.append(signature.bind(*args, **kwargs))
+        return real(*args, **kwargs)
+
+    render.render_home = recording
+    try:
+        return render.main()
+    finally:
+        render.render_home = real
 
 
 def without_field_nav(home: str) -> str:
@@ -68,25 +90,31 @@ def main() -> int:
 
         render.DATA = data
         render.SITE = tmp / "legacy-site"
-        bad += check(render.main() == 0, "legacy single-field render failed")
+        calls = []
+        bad += check(recorded_render(calls) == 0, "legacy single-field render failed")
+        bad += check(len(calls) == 1,
+                     f"render.main() called render_home {len(calls)} times, expected 1")
+        if not calls:
+            return 1
 
-        # (a) The same call, both signatures.  main() derives exactly this
-        # one-entry fields_index and field_works for a legacy corpus.
-        corpus = json.loads((data / "corpus.json").read_text())
-        works_index = json.loads((data / "works-index.json").read_text())
-        authors_index = json.loads((data / "authors-index.json").read_text())
-        fields_index = [{
-            "key": legacy_key,
-            "name": definition["name"],
-            "description": definition.get("description"),
-            "works": len(works_index),
-        }]
-        field_works = {legacy_key: works_index}
-        render.NAV_FIELDS = fields_index
+        # (a) The same call, both signatures.
+        passed = calls[0].arguments
+        bad += check("fields_index" in passed and "field_works" in passed,
+                     "render.main() still calls render_home with the legacy three "
+                     f"arguments: it passed {sorted(passed)}")
+        if "fields_index" not in passed or "field_works" not in passed:
+            return 1
 
-        legacy_call = render.render_home(corpus, works_index, authors_index).encode()
-        extended_call = render.render_home(
-            corpus, works_index, authors_index, fields_index, field_works).encode()
+        fields_index, field_works = passed["fields_index"], passed["field_works"]
+        bad += check([field["key"] for field in fields_index] == [legacy_key],
+                     "a legacy corpus did not reach render_home as one normalized "
+                     f"field: {[field.get('key') for field in fields_index]}")
+        bad += check(sorted(field_works) == [legacy_key],
+                     f"field_works is not the one legacy field: {sorted(field_works)}")
+
+        extended_call = render.render_home(*calls[0].args, **calls[0].kwargs).encode()
+        legacy_call = render.render_home(
+            passed["corpus"], passed["works"], passed["authors"]).encode()
         bad += check(
             legacy_call == extended_call,
             "single-field five-argument render_home is not byte-identical to the "
@@ -95,16 +123,19 @@ def main() -> int:
 
         # (b) The legacy full render carries no per-field section markup.
         home = (render.SITE / "index.html").read_text()
-        body = without_field_nav(home)
+        bad += check(home.encode() == extended_call,
+                     "the home page on disk is not what render_home returned")
         bad += check('<nav class="field-nav"' in home,
                      "fixture changed: the home page no longer carries the chrome field nav")
+        body = without_field_nav(home)
         field_links = sorted(set(re.findall(r'href="(fields/[^"]*)"', body)))
         bad += check(field_links == ["fields/"],
                      f"legacy home page links field pages outside the chrome nav: {field_links}")
-        bad += check(not re.search(r"<h2>\s*<a href=\"fields/", body),
-                     "legacy home page has a per-field section heading")
         bad += check(legacy_key not in body,
                      f"legacy home page names the field {legacy_key} outside the chrome nav")
+        field_classes = re.findall(r'<\w+[^>]*class="[^"]*\bfield[\w-]*"', body)
+        bad += check(not field_classes,
+                     f"legacy home page carries field-scoped markup: {field_classes}")
     finally:
         render.DATA, render.SITE, render.ASSETS, render.NAV_FIELDS = saved
         shutil.rmtree(tmp, ignore_errors=True)
