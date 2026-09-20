@@ -1644,6 +1644,7 @@ def render_fields(fields: list[dict]) -> str:
         description="Every normalized field in this corpus and its complete paper list.",
         body=body,
         path="fields/",
+        extra_head=breadcrumb_json_ld([("Home", ""), ("Fields", "fields/")]),
     )
 
 
@@ -1674,6 +1675,9 @@ def render_field(field: dict, works: list, corpus: dict) -> str:
         description=description,
         body=body,
         path=f'fields/{field["key"]}/',
+        extra_head=breadcrumb_json_ld([
+            ("Home", ""), ("Fields", "fields/"), (field["name"], f'fields/{field["key"]}/'),
+        ]),
     )
 
 
