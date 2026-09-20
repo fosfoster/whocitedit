@@ -122,6 +122,35 @@ CSL_TYPES = {
 }
 
 
+# Every exported work type -> a standard BibTeX entry type. BibTeX's entry types
+# are narrower than OpenAlex's work types, so several work types share the
+# nearest entry type. Datasets, software and preprints have no entry type of
+# their own -- @unpublished, the closest fit for a preprint, requires a `note`
+# field this exporter never emits -- so they name `misc` deliberately rather than
+# reach it by omission; `misc` also carries any work type not listed here.
+BIBTEX_TYPES = {
+    "article": "article",
+    "book": "book",
+    "book-chapter": "incollection",
+    "book-review": "article",
+    "conference-abstract": "inproceedings",
+    "conference-paper": "inproceedings",
+    "data-paper": "article",
+    "dataset": "misc",
+    "dissertation": "phdthesis",
+    "editorial": "article",
+    "erratum": "article",
+    "other": "misc",
+    "paratext": "misc",
+    "preprint": "misc",
+    "reference-entry": "incollection",
+    "report": "techreport",
+    "review": "article",
+    "software": "misc",
+    "software-paper": "article",
+}
+
+
 def e(s) -> str:
     return html.escape(str(s if s is not None else ""), quote=True)
 
@@ -302,6 +331,7 @@ def work_bibtex(w: dict) -> str:
     """A small, deterministic citation from fields already rendered on a work page."""
     source = w.get("source") or {}
     authors = [author.get("name") for author in w.get("authors", []) if author.get("name")]
+    entry = BIBTEX_TYPES.get(w.get("type"), "misc")
     fields = [
         ("author", " and ".join(authors)),
         ("title", w.get("title")),
@@ -311,7 +341,7 @@ def work_bibtex(w: dict) -> str:
     ]
     rendered = [f"  {name} = {{{bibtex_escape(value)}}}" for name, value in fields if value]
     body = ",\n".join(rendered)
-    return f"@misc{{{w['id']},\n" + (f"{body}\n" if body else "") + "}\n"
+    return f"@{entry}{{{w['id']},\n" + (f"{body}\n" if body else "") + "}\n"
 
 
 def _csl_issued(w: dict) -> dict | None:
