@@ -298,6 +298,18 @@ def bibtex_escape(value) -> str:
     return "".join(escaped)
 
 
+BIBTEX_TYPES = {
+    "book": "@book",
+    "dissertation": "@phdthesis",
+    "conference-paper": "@inproceedings",
+}
+
+
+def bibtex_type(work_type) -> str:
+    """The BibTeX entry type for a work's type, falling back to @misc."""
+    return BIBTEX_TYPES.get(work_type, "@misc")
+
+
 def work_bibtex(w: dict) -> str:
     """A small, deterministic citation from fields already rendered on a work page."""
     source = w.get("source") or {}
