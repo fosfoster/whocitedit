@@ -1786,6 +1786,7 @@ def render_field(field: dict, works: list, corpus: dict) -> str:
 
 def render_cohort(kind: str, band: str, index_rows: list) -> str:
     """Render an uncapped uncertainty cohort in its exported index order."""
+    signal_links = ""
     if kind == "authors":
         rows = [row for row in index_rows if row["band"] == band]
         title = "Low-confidence authors"
@@ -1817,10 +1818,17 @@ def render_cohort(kind: str, band: str, index_rows: list) -> str:
         )
         path = f"works/{band}/"
         noun = "paper records"
+        signal_links = """
+<p class="meta">Drill into a specific signal: <a href="../missing-authors/">missing authors</a>,
+   <a href="../no-references/">missing references</a>,
+   <a href="../doi-year-mismatch/">a DOI-year mismatch</a>, or
+   <a href="../missing-title/">a missing title</a>.</p>
+"""
 
     body = f"""
 <h1>{title}</h1>
 <p class="lede">{num(len(rows))} {band} {noun} in this corpus. Every matching record is shown below.</p>
+{signal_links}
 <div class="scroll"><table><thead>{head}</thead><tbody>{body_rows}</tbody></table></div>
 """
     return page(
@@ -1982,10 +1990,10 @@ def render_methodology(corpus: dict) -> str:
 <div class="panel">
 <h2>Paper records get the same treatment</h2>
 <p>A work record can contradict itself, and in this corpus a surprising number do.
-   We check four things that need no second source to verify: whether the record
-   lists any authors at all, whether it records references behind a large citation
-   count, whether the year embedded in its DOI agrees with its own publication
-   year, and whether it has a title.</p>
+   We check four things that need no second source to verify: <a href="../works/missing-authors/">whether the record
+   lists any authors at all</a>, <a href="../works/no-references/">whether it records references behind a large citation
+   count</a>, <a href="../works/doi-year-mismatch/">whether the year embedded in its DOI agrees with its own publication
+   year</a>, and <a href="../works/missing-title/">whether it has a title</a>.</p>
 <p class="meta">{num(corpus["quality"]["complete"])} complete &middot;
    {num(corpus["quality"]["partial"])} partial &middot;
    {num(corpus["quality"]["suspect"])} suspect.</p>
