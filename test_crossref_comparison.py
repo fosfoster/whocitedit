@@ -7,6 +7,8 @@ the rendered page. Once the reader app owns this panel, the export-shape
 checks belong in `test_entity_export.py` and the page checks beside the other
 render tests.
 """
+from __future__ import annotations
+
 import hashlib
 import json
 import shutil
