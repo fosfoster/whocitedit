@@ -33,6 +33,8 @@ FIXED_HTML_ROUTES = {
     "works/missing-authors/index.html",
     "works/doi-year-mismatch/index.html",
     "works/no-references/index.html",
+    "works/doi-year-disagreement/index.html",
+    "works/heavily-cited-no-references/index.html",
     "institutions/index.html",
     "topics/index.html",
     "methodology/index.html",

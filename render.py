@@ -1891,7 +1891,10 @@ def render_cohort(kind: str, band: str, index_rows: list) -> str:
     )
 
 
-SIGNAL_COHORTS = {
+# These cohorts are an honesty layer over the exported source record.  They use
+# the quality evidence already calculated upstream, then join that membership
+# back to works-index so their display fields and ordering stay export-driven.
+WORK_INTEGRITY_COHORTS = {
     "title": {
         "path": "works/missing-title/",
         "title": "Records with no title",
@@ -1903,21 +1906,25 @@ SIGNAL_COHORTS = {
         "lede": "these {n} records list no authors at all",
     },
     "doi_year": {
-        "path": "works/doi-year-mismatch/",
+        "path": "works/doi-year-disagreement/",
+        "legacy_paths": ("works/doi-year-mismatch/",),
         "title": "Records whose DOI-asserted year disagrees",
         "lede": "these {n} records carry a publication year that disagrees with the year asserted by their DOI",
     },
     "references": {
-        "path": "works/no-references/",
+        "path": "works/heavily-cited-no-references/",
+        "legacy_paths": ("works/no-references/",),
         "title": "Records with no references",
         "lede": "these {n} records list no references at all",
     },
 }
 
 
-def render_signal_cohort(signal: str, works_index: list, member_ids: set) -> str:
+def render_integrity_cohort(signal: str, works_index: list, member_ids: set,
+                            path: str | None = None) -> str:
     """Render every work whose quality.evidence weakens on one signal, uncapped."""
-    config = SIGNAL_COHORTS[signal]
+    config = WORK_INTEGRITY_COHORTS[signal]
+    path = path or config["path"]
     rows = [row for row in works_index if row["id"] in member_ids]
     head = ('<tr><th>Paper</th><th>Record</th><th class="num">Year</th>'
             '<th class="num">Cited</th><th class="num">In corpus</th></tr>')
@@ -1939,7 +1946,7 @@ def render_signal_cohort(signal: str, works_index: list, member_ids: set) -> str
         title=f'{config["title"]} — {SITE_NAME}',
         description=f'{config["title"]}. The complete cohort is shown in works-index order.',
         body=body,
-        path=config["path"],
+        path=path,
     )
 
 
@@ -2168,7 +2175,7 @@ def main() -> int:
     institution_ids = set(institution_payloads)
     topic_ids = set(topic_payloads)
     work_raw = {}
-    signal_members = {signal: set() for signal in SIGNAL_COHORTS}
+    integrity_members = {signal: set() for signal in WORK_INTEGRITY_COHORTS}
 
     for shard in sorted((DATA / "works").glob("*.json")):
         for wid, w in json.loads(shard.read_text()).items():
@@ -2179,8 +2186,9 @@ def main() -> int:
             w.setdefault("fields", legacy_fields)
             work_raw[wid] = w.get("raw")
             for item in w.get("quality", {}).get("evidence", []):
-                if item["signal"] in signal_members and item["direction"] == "weakens":
-                    signal_members[item["signal"]].add(wid)
+                if (item["signal"] in integrity_members
+                        and item["direction"] == "weakens"):
+                    integrity_members[item["signal"]].add(wid)
             total += write(
                 f"w/{wid}/index.html",
                 render_work(w, author_names, titles, payloads, quality_notes, topic_ids),
@@ -2224,15 +2232,19 @@ def main() -> int:
     total += write("authors/low-confidence/index.html", render_cohort("authors", "low", authors_index))
     total += write("works/partial/index.html", render_cohort("works", "partial", works_index))
     total += write("works/suspect/index.html", render_cohort("works", "suspect", works_index))
-    for signal, config in SIGNAL_COHORTS.items():
-        total += write(
-            f'{config["path"]}index.html',
-            render_signal_cohort(signal, works_index, signal_members[signal]),
-        )
+    for signal, config in WORK_INTEGRITY_COHORTS.items():
+        for path in (config["path"], *config.get("legacy_paths", ())):
+            total += write(
+                f"{path}index.html",
+                render_integrity_cohort(signal, works_index, integrity_members[signal], path),
+            )
     total += write("institutions/index.html", render_browse("institutions", institutions_index, corpus))
     total += write("topics/index.html", render_browse("topics", topics_index, corpus))
     total += write("methodology/index.html", render_methodology(corpus))
-    n += 10 + len(fields_index) + len(SIGNAL_COHORTS)
+    n += 10 + len(fields_index) + sum(
+        1 + len(config.get("legacy_paths", ()))
+        for config in WORK_INTEGRITY_COHORTS.values()
+    )
 
     # The browse pages fetch these at runtime for search; the rest of the corpus
     # data is already baked into the HTML and is not shipped.
@@ -2261,7 +2273,9 @@ def main() -> int:
         f"<url><loc>{SITE_URL}/{p}</loc></url>"
         for p in ["", "works/", "works/partial/", "works/suspect/", "fields/", "authors/",
                   "authors/low-confidence/", "institutions/", "topics/", "methodology/"]
-        + [config["path"] for config in SIGNAL_COHORTS.values()]
+        + [path
+           for config in WORK_INTEGRITY_COHORTS.values()
+           for path in (config["path"], *config.get("legacy_paths", ()))]
         + [f"fields/{field['key']}/" for field in fields_index]
         + [f"w/{w['id']}/" for w in works_index]
         + [f"a/{a['id']}/" for a in authors_index]
