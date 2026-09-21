@@ -100,6 +100,51 @@ def main() -> int:
         bad += check("<" not in blocks[0] if blocks else False,
                      f"{kind} JSON-LD block contains raw '<' from entity data")
 
+    works = browse_rows("works", 401)
+    field = {
+        "key": "synthetic-field",
+        "name": "Synthetic field",
+        "description": "A field used to test uncapped listing metadata.",
+        "works": len(works),
+    }
+    page = render.render_field(field, works, corpus)
+    _, blocks, lists = metadata(page)
+    item_list = lists[0] if lists else {}
+    canonical = render.canonical_url(f"fields/{field['key']}/")
+    items = item_list.get("itemListElement", [])
+
+    bad += check(len(blocks) == 1, "field head does not contain exactly one JSON-LD block")
+    bad += check(item_list.get("@context") == "https://schema.org"
+                 and item_list.get("@type") == "ItemList",
+                 "field JSON-LD is not an ItemList")
+    bad += check(item_list.get("@id") == canonical and item_list.get("url") == canonical,
+                 "field ItemList canonical identifiers do not match the field page")
+    bad += check(item_list.get("name") == field["name"],
+                 "field ItemList name does not match the page title")
+    bad += check(item_list.get("numberOfItems") == len(works) == len(items),
+                 "field ItemList count does not match every displayed work")
+    bad += check([item.get("position") for item in items] == list(range(1, len(works) + 1)),
+                 "field ItemList positions are not contiguous and 1-based")
+
+    expected_hrefs = [f"../../w/{work['id']}/" for work in works]
+    table = page.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
+    table_hrefs = re.findall(r'<a href="(\.\./\.\./w/[^"]+/)">', table)
+    bad += check(table_hrefs == expected_hrefs,
+                 "field table detail hrefs do not match every work")
+    item_entities = [
+        item.get("item") if isinstance(item.get("item"), dict) else {}
+        for item in items
+    ]
+    bad += check(
+        [(item.get("@id"), item.get("url"), item.get("name")) for item in item_entities]
+        == [(render.canonical_url(f"w/{work['id']}/"),
+             render.canonical_url(f"w/{work['id']}/"), work["title"])
+            for work in works],
+        "field ItemList entries do not match the table entity links",
+    )
+    bad += check("<" not in blocks[0] if blocks else False,
+                 "field JSON-LD block contains raw '<' from entity data")
+
     print("test_listing_itemlist:", "FAILED" if bad else "ok")
     return 1 if bad else 0
 

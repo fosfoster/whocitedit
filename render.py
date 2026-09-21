@@ -184,12 +184,13 @@ def breadcrumb_json_ld(trail: list[tuple[str, str]]) -> str:
 
 def listing_metadata(canonical: str, name: str, entries: list[dict]) -> str:
     """ItemList metadata for one of the public entity listings."""
-    kind = canonical.rsplit("/", 1)[-1]
+    kind = urlsplit(canonical).path.strip("/").split("/", 1)[0]
     prefix, name_key = {
         "works": ("w", "title"),
         "authors": ("a", "name"),
         "institutions": ("i", "name"),
         "topics": ("t", "name"),
+        "fields": ("w", "title"),
     }[kind]
     return json_ld({
         "@context": "https://schema.org",
@@ -1838,9 +1839,9 @@ def render_field(field: dict, works: list, corpus: dict) -> str:
         description=description,
         body=body,
         path=f'fields/{field["key"]}/',
-        extra_head=breadcrumb_json_ld([
-            ("Home", ""), ("Fields", "fields/"), (field["name"], f'fields/{field["key"]}/'),
-        ]),
+        extra_head=listing_metadata(
+            canonical_url(f'fields/{field["key"]}/'), field["name"], works,
+        ),
     )
 
 
