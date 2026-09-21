@@ -865,6 +865,12 @@ def record_comparison_html(comparison: dict | None, payloads: dict) -> str:
     entry for a work that only one of those sources covers; `openalex` is
     always present.
 
+    Both the field block and the source entry inside it are looked up with
+    `.get`, because a payload exported before Europe PMC joined this panel
+    carries neither a `venue` block nor any `europepmc` entry, and the
+    committed `web/data` release is exactly that until an operator re-exports.
+    A field the export never wrote is skipped, not crashed on.
+
     The OpenAlex record above this panel is unchanged by anything here: a
     disagreement is shown, not resolved.
     """
@@ -872,7 +878,9 @@ def record_comparison_html(comparison: dict | None, payloads: dict) -> str:
         return ""
     sections = []
     for key, label in (("title", "Title"), ("venue", "Venue"), ("date", "Publication date")):
-        field = comparison[key]
+        field = comparison.get(key)
+        if not field:
+            continue
         status = field["status"]
         precision = field.get("precision")
         scope = f' <span class="faint">compared to the {e(precision)}</span>' if precision else ""
@@ -894,8 +902,10 @@ def record_comparison_html(comparison: dict | None, payloads: dict) -> str:
     role = comparison["role"]
     return f"""
   <div class="panel">
-    <h2>Title and date across sources</h2>
-    <p class="meta">{e(role[:1].upper() + role[1:])}. The record above stays as OpenAlex published it.</p>
+    <h2>Title, venue and date across sources</h2>
+    <p class="meta">{e(role[:1].upper() + role[1:])}. Title, venue and date each carry one
+    row per source that asserts them, with that source's payload hash and fetch time;
+    the record above stays as OpenAlex published it.</p>
     <ul class="evidence">{"".join(sections)}</ul>
   </div>
 """
