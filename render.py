@@ -299,9 +299,25 @@ def bibtex_escape(value) -> str:
 
 
 BIBTEX_TYPES = {
+    "article": "@article",
     "book": "@book",
-    "dissertation": "@phdthesis",
+    "book-chapter": "@incollection",
+    "book-review": "@article",
+    "conference-abstract": "@inproceedings",
     "conference-paper": "@inproceedings",
+    "data-paper": "@article",
+    "dataset": "@misc",
+    "dissertation": "@phdthesis",
+    "editorial": "@article",
+    "erratum": "@article",
+    "other": "@misc",
+    "paratext": "@misc",
+    "preprint": "@misc",
+    "reference-entry": "@incollection",
+    "report": "@techreport",
+    "review": "@article",
+    "software": "@misc",
+    "software-paper": "@article",
 }
 
 

@@ -103,11 +103,14 @@ def main() -> int:
                 bad += check(text == render.work_bibtex(work), f"{wid} citation differs from its page data")
                 bad += check(ABSTRACT_SENTINEL not in text, f"{wid} citation leaked an abstract")
 
+        # The fixture corpus stores every work as type='article', so the rendered
+        # entries open with @article where the untyped works above open with @misc.
+        # Everything after that first line is the same escaping and order.
         rendered = (tmp / "site" / "w" / "W1" / "citation.bib").read_text(encoding="utf-8")
-        bad += check(rendered == expected.replace("W123", "W1", 1),
-                     "rendered complete citation has the wrong fields or escaping")
+        bad += check(rendered == expected.replace("@misc{W123", "@article{W1", 1),
+                     "rendered complete citation has the wrong entry type, fields, or escaping")
         sparse_rendered = (tmp / "site" / "w" / "W2" / "citation.bib").read_text(encoding="utf-8")
-        bad += check(sparse_rendered == "@misc{W2,\n  title = {<script>alert(\"xss\")</script> \\& \"quotes\"}\n}\n",
+        bad += check(sparse_rendered == "@article{W2,\n  title = {<script>alert(\"xss\")</script> \\& \"quotes\"}\n}\n",
                      "rendered sparse citation fabricated absent fields")
     finally:
         (export_json.OUT, export_json.DB_PATH, export_json.ROOT,
