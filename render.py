@@ -1779,6 +1779,58 @@ def render_cohort(kind: str, band: str, index_rows: list) -> str:
     )
 
 
+SIGNAL_COHORTS = {
+    "title": {
+        "path": "works/missing-title/",
+        "title": "Records with no title",
+        "lede": "these {n} records list no title at all",
+    },
+    "authors": {
+        "path": "works/missing-authors/",
+        "title": "Records with no authors",
+        "lede": "these {n} records list no authors at all",
+    },
+    "doi_year": {
+        "path": "works/doi-year-mismatch/",
+        "title": "Records whose DOI-asserted year disagrees",
+        "lede": "these {n} records carry a publication year that disagrees with the year asserted by their DOI",
+    },
+    "references": {
+        "path": "works/no-references/",
+        "title": "Records with no references",
+        "lede": "these {n} records list no references at all",
+    },
+}
+
+
+def render_signal_cohort(signal: str, works_index: list, member_ids: set) -> str:
+    """Render every work whose quality.evidence weakens on one signal, uncapped."""
+    config = SIGNAL_COHORTS[signal]
+    rows = [row for row in works_index if row["id"] in member_ids]
+    head = ('<tr><th>Paper</th><th>Record</th><th class="num">Year</th>'
+            '<th class="num">Cited</th><th class="num">In corpus</th></tr>')
+    body_rows = "".join(
+        f'<tr><td><a href="../../w/{e(row["id"])}/">{e(row["title"])}</a>'
+        f'<br><span class="meta faint">{e(", ".join(row["authors"]))}</span></td>'
+        f'<td>{badge(row.get("quality"), hide="complete")}</td>'
+        f'<td class="num">{e(row["year"] or "")}</td><td class="num">{num(row["cited"])}</td>'
+        f'<td class="num">{num(row["in_corpus_cited"])}</td></tr>'
+        for row in rows
+    )
+    lede = config["lede"].format(n=f"{len(rows):,}")
+    body = f"""
+<h1>{config["title"]}</h1>
+<p class="lede">{lede[0].upper() + lede[1:]}. Every matching record is shown below.</p>
+<div class="scroll"><table><thead>{head}</thead><tbody>{body_rows}</tbody></table></div>
+"""
+    return page(
+        title=f'{config["title"]} — {SITE_NAME}',
+        description=f'{config["title"]}. The complete cohort is shown in works-index order.',
+        body=body,
+        path=config["path"],
+    )
+
+
 def render_methodology(corpus: dict) -> str:
     abstracts = corpus["abstracts"]
     declared_sources = corpus.get("citation_sources", corpus["sources"])
@@ -2004,6 +2056,7 @@ def main() -> int:
     institution_ids = set(institution_payloads)
     topic_ids = set(topic_payloads)
     work_raw = {}
+    signal_members = {signal: set() for signal in SIGNAL_COHORTS}
 
     for shard in sorted((DATA / "works").glob("*.json")):
         for wid, w in json.loads(shard.read_text()).items():
@@ -2013,6 +2066,9 @@ def main() -> int:
             # export-driven shard already has its own keys and keeps them.
             w.setdefault("fields", legacy_fields)
             work_raw[wid] = w.get("raw")
+            for item in w.get("quality", {}).get("evidence", []):
+                if item["signal"] in signal_members and item["direction"] == "weakens":
+                    signal_members[item["signal"]].add(wid)
             total += write(
                 f"w/{wid}/index.html",
                 render_work(w, author_names, titles, payloads, quality_notes, topic_ids),
@@ -2056,10 +2112,15 @@ def main() -> int:
     total += write("authors/low-confidence/index.html", render_cohort("authors", "low", authors_index))
     total += write("works/partial/index.html", render_cohort("works", "partial", works_index))
     total += write("works/suspect/index.html", render_cohort("works", "suspect", works_index))
+    for signal, config in SIGNAL_COHORTS.items():
+        total += write(
+            f'{config["path"]}index.html',
+            render_signal_cohort(signal, works_index, signal_members[signal]),
+        )
     total += write("institutions/index.html", render_browse("institutions", institutions_index, corpus))
     total += write("topics/index.html", render_browse("topics", topics_index, corpus))
     total += write("methodology/index.html", render_methodology(corpus))
-    n += 10 + len(fields_index)
+    n += 10 + len(fields_index) + len(SIGNAL_COHORTS)
 
     # The browse pages fetch these at runtime for search; the rest of the corpus
     # data is already baked into the HTML and is not shipped.
@@ -2088,6 +2149,7 @@ def main() -> int:
         f"<url><loc>{SITE_URL}/{p}</loc></url>"
         for p in ["", "works/", "works/partial/", "works/suspect/", "fields/", "authors/",
                   "authors/low-confidence/", "institutions/", "topics/", "methodology/"]
+        + [config["path"] for config in SIGNAL_COHORTS.values()]
         + [f"fields/{field['key']}/" for field in fields_index]
         + [f"w/{w['id']}/" for w in works_index]
         + [f"a/{a['id']}/" for a in authors_index]
