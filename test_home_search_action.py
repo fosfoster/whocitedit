@@ -49,10 +49,9 @@ def check_search_action(ld: dict | None, label: str) -> int:
         template = target.get("urlTemplate", "")
         bad += check(target.get("@type") == "EntryPoint",
                      f"{label} SearchAction target is not EntryPoint")
-        bad += check(template.startswith(render.SITE_URL),
-                     f"{label} urlTemplate does not start with render.SITE_URL")
-        bad += check("{search_term_string}" in template,
-                     f"{label} urlTemplate lacks the search_term_string placeholder")
+        expected_template = f"{render.SITE_URL}/?q={{search_term_string}}"
+        bad += check(template == expected_template,
+                     f"{label} urlTemplate is not the global search URL")
     bad += check(action.get("query-input") == "required name=search_term_string",
                  f"{label} SearchAction has the wrong query-input")
     return bad
