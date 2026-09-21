@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import html
 import json
+import math
 import re
 import sys
 import unicodedata
@@ -890,6 +891,117 @@ def combined_comparison_status(statuses: list[str]) -> str:
     if not comparable:
         return "unavailable"
     return "agree" if all(s == "agree" for s in comparable) else "disagree"
+
+
+# This is an export-only honesty signal, deliberately separate from
+# `score_quality`: a selected corpus cannot establish that a citation count is
+# wrong, only that it is unusually high beside its exact peers in this corpus.
+CITATION_OUTLIER_MIN_PEERS = 8
+CITATION_OUTLIER_OUTER_FENCE_MULTIPLIER = 3
+CITATION_OUTLIER_MEDIAN_MULTIPLIER = 5
+CITATION_OUTLIER_SELECTED_CORPUS_BASIS = (
+    "Relative only to selected corpus peers with the same OpenAlex publication "
+    "year and stable venue source ID; it is not a population estimate."
+)
+
+
+def _quantile(values: list[float], fraction: float) -> float:
+    """A deterministic linear-interpolated quantile for already sorted values."""
+    position = (len(values) - 1) * fraction
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return values[lower]
+    return values[lower] + (values[upper] - values[lower]) * (position - lower)
+
+
+def _median(values: list[int]) -> float:
+    middle = len(values) // 2
+    if len(values) % 2:
+        return values[middle]
+    return (values[middle - 1] + values[middle]) / 2
+
+
+def _citation_count_outlier(work, peer_counts: list[int]) -> dict | None:
+    """Return conservative selected-corpus evidence for one work, or None.
+
+    Counts are compared on a log1p scale because citation counts are skewed.
+    This only reads the supplied values and intentionally does not feed the
+    quality scorer or modify any stored work record.
+    """
+    if len(peer_counts) < CITATION_OUTLIER_MIN_PEERS:
+        return None
+
+    peer_counts = sorted(peer_counts)
+    observed = work["cited_by_count"]
+    peer_median = _median(peer_counts)
+    log_counts = [math.log1p(count) for count in peer_counts]
+    q1 = _quantile(log_counts, 0.25)
+    q3 = _quantile(log_counts, 0.75)
+    log1p_upper_outer_fence = math.expm1(
+        q3 + CITATION_OUTLIER_OUTER_FENCE_MULTIPLIER * (q3 - q1)
+    )
+    five_times_peer_median = peer_median * CITATION_OUTLIER_MEDIAN_MULTIPLIER
+    effective_threshold = max(log1p_upper_outer_fence, five_times_peer_median)
+
+    # Both guards are intentionally strict: a count on a fence is not an
+    # outlier, and a lower value is never evaluated as an upper outlier.
+    if (
+        observed <= peer_median
+        or observed <= log1p_upper_outer_fence
+        or observed <= five_times_peer_median
+    ):
+        return None
+
+    return {
+        "basis": CITATION_OUTLIER_SELECTED_CORPUS_BASIS,
+        "observed_openalex_citation_count": observed,
+        "year": work["year"],
+        "venue": {"id": work["source_id"], "name": work["source_name"]},
+        "peer_count": len(peer_counts),
+        "peer_median": peer_median,
+        "log1p_upper_outer_fence": log1p_upper_outer_fence,
+        "five_times_peer_median": five_times_peer_median,
+        "effective_threshold": effective_threshold,
+    }
+
+
+def citation_count_outlier(conn, work) -> dict | None:
+    """Read one work's exact year-and-venue selected-corpus cohort.
+
+    This helper is intentionally read-only so export can derive the evidence
+    without changing source counts, quality evidence, or quality bands.
+    """
+    if work["year"] is None or work["source_id"] is None:
+        return None
+    peers = [
+        row["cited_by_count"]
+        for row in conn.execute(
+            "SELECT cited_by_count FROM work "
+            "WHERE year = ? AND source_id = ? AND id != ? ORDER BY cited_by_count, id",
+            (work["year"], work["source_id"], work["id"]),
+        )
+    ]
+    return _citation_count_outlier(work, peers)
+
+
+def citation_count_outliers(conn) -> dict[str, dict]:
+    """Derive every exportable citation-count outlier without database writes."""
+    cohorts: dict[tuple[int, str], list] = {}
+    for row in conn.execute(
+        "SELECT id, year, source_id, source_name, cited_by_count FROM work "
+        "WHERE year IS NOT NULL AND source_id IS NOT NULL ORDER BY year, source_id, id"
+    ):
+        cohorts.setdefault((row["year"], row["source_id"]), []).append(row)
+
+    outliers = {}
+    for works in cohorts.values():
+        for work in works:
+            peers = [peer["cited_by_count"] for peer in works if peer["id"] != work["id"]]
+            evidence = _citation_count_outlier(work, peers)
+            if evidence is not None:
+                outliers[work["id"]] = evidence
+    return outliers
 
 
 def score_quality(conn) -> dict[str, int]:

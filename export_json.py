@@ -67,6 +67,8 @@ MAX_INNER_EDGES = 80
 # page across 3,000 pages is several megabytes of duplication.
 MAX_NODE_LABEL = 90
 
+_UNSET = object()
+
 
 
 def _display(path: Path) -> str:
@@ -336,7 +338,7 @@ def _record_comparison(conn, row) -> dict | None:
     }
 
 
-def work_payload(conn, row, neighbourhood) -> dict:
+def work_payload(conn, row, neighbourhood, citation_count_outlier=_UNSET) -> dict:
     wid = row["id"]
     fields = [
         r["field_key"]
@@ -368,6 +370,8 @@ def work_payload(conn, row, neighbourhood) -> dict:
             (wid,),
         )
     ]
+    if citation_count_outlier is _UNSET:
+        citation_count_outlier = derive.citation_count_outlier(conn, row)
     return {
         "id": wid,
         "title": row["title"],
@@ -390,6 +394,7 @@ def work_payload(conn, row, neighbourhood) -> dict:
         },
         "cited_by_count": row["cited_by_count"],
         "referenced_count": row["referenced_count"],
+        "citation_count_outlier": citation_count_outlier,
         "quality": {
             "band": row["quality"] or quality.COMPLETE,
             "sentence": quality.band_sentence(row["quality"] or quality.COMPLETE),
@@ -852,13 +857,16 @@ def main() -> int:
         r["cited_id"]: r["n"]
         for r in conn.execute("SELECT cited_id, COUNT(*) n FROM citation GROUP BY cited_id")
     }
+    citation_outliers = derive.citation_count_outliers(conn)
 
     # -- works -----------------------------------------------------------
     work_shards: dict[str, dict] = {}
     work_index = []
     for row in conn.execute("SELECT * FROM work ORDER BY cited_by_count DESC, id"):
         wid = row["id"]
-        payload = work_payload(conn, row, work_graph(conn, wid, titles))
+        payload = work_payload(
+            conn, row, work_graph(conn, wid, titles), citation_outliers.get(wid)
+        )
         payload["in_corpus_cited_by"] = in_cites.get(wid, 0)
         work_shards.setdefault(shard(wid), {})[wid] = payload
         work_index.append(
