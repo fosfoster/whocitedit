@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""Offline ItemList JSON-LD coverage for the public browse listings."""
+import json
+import re
+import sys
+
+import render
+
+
+def check(condition, message):
+    if not condition:
+        print(f"  FAIL: {message}")
+        return 1
+    return 0
+
+
+def browse_rows(kind: str, count: int) -> list[dict]:
+    rows = []
+    prefixes = {"works": "W", "authors": "A", "institutions": "I", "topics": "T"}
+    for position in range(1, count + 1):
+        ident = f"{prefixes[kind]}{position}"
+        label = "Unsafe <name> & title" if position == 1 else f"{kind.title()} {position}"
+        if kind == "works":
+            rows.append({
+                "id": ident, "title": label, "authors": ["Example Author"],
+                "quality": {"band": "complete", "sentence": "Complete", "evidence": []},
+                "year": 2024, "cited": position, "in_corpus_cited": position - 1,
+            })
+        elif kind == "authors":
+            rows.append({
+                "id": ident, "name": label, "band": "high", "works": position,
+                "coauthors": position - 1, "cited": position,
+            })
+        elif kind == "institutions":
+            rows.append({
+                "id": ident, "name": label, "authors": position,
+                "works": position + 1, "graph": position - 1,
+            })
+        else:
+            rows.append({
+                "id": ident, "name": label, "works": position,
+                "authors": position - 1,
+            })
+    return rows
+
+
+def metadata(page: str) -> tuple[str, list[str], list[dict]]:
+    head = page.split("</head>", 1)[0]
+    blocks = re.findall(r'<script type="application/ld\+json">(.*?)</script>', head, re.S)
+    return head, blocks, [json.loads(block) for block in blocks]
+
+
+def main() -> int:
+    bad = 0
+    corpus = {"definition": {"name": "Synthetic corpus"}}
+    specs = {
+        "works": ("Papers", "w", "title"),
+        "authors": ("Authors", "a", "name"),
+        "institutions": ("Institutions", "i", "name"),
+        "topics": ("Topics", "t", "name"),
+    }
+
+    for kind, (title, prefix, name_key) in specs.items():
+        rows = browse_rows(kind, 401)
+        page = render.render_browse(kind, rows, corpus)
+        _, blocks, lists = metadata(page)
+        item_list = lists[0] if lists else {}
+        canonical = render.canonical_url(f"{kind}/")
+        items = item_list.get("itemListElement", [])
+        expected_rows = rows[:400]
+
+        bad += check(len(blocks) == 1, f"{kind} head does not contain exactly one JSON-LD block")
+        bad += check(item_list.get("@context") == "https://schema.org"
+                     and item_list.get("@type") == "ItemList",
+                     f"{kind} JSON-LD is not an ItemList")
+        bad += check(item_list.get("@id") == canonical and item_list.get("url") == canonical,
+                     f"{kind} ItemList canonical identifiers do not match the browse page")
+        bad += check(item_list.get("name") == title, f"{kind} ItemList name does not match the page title")
+        bad += check(item_list.get("numberOfItems") == len(expected_rows) == len(items),
+                     f"{kind} ItemList count does not match the 400 displayed rows")
+        bad += check([item.get("position") for item in items] == list(range(1, len(expected_rows) + 1)),
+                     f"{kind} ItemList positions are not contiguous and 1-based")
+
+        expected_hrefs = [f"../{prefix}/{row['id']}/" for row in expected_rows]
+        table = page.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
+        table_hrefs = re.findall(r'<a href="(\.\./[wait]/[^"]+/)">', table)
+        bad += check(table_hrefs == expected_hrefs,
+                     f"{kind} table detail hrefs do not match its displayed rows")
+        item_entities = [
+            item.get("item") if isinstance(item.get("item"), dict) else {}
+            for item in items
+        ]
+        bad += check(
+            [(item.get("@id"), item.get("url"), item.get("name")) for item in item_entities]
+            == [(render.canonical_url(f"{prefix}/{row['id']}/"),
+                 render.canonical_url(f"{prefix}/{row['id']}/"), row[name_key])
+                for row in expected_rows],
+            f"{kind} ItemList entries do not match the table entity links",
+        )
+        bad += check("<" not in blocks[0] if blocks else False,
+                     f"{kind} JSON-LD block contains raw '<' from entity data")
+
+    print("test_listing_itemlist:", "FAILED" if bad else "ok")
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
