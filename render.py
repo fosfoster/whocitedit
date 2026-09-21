@@ -482,6 +482,7 @@ def search_index(works: list, authors: list, institutions: list, topics: list) -
             "id": row["id"],
             "label": row[label],
             **({"state": row[state]} if state else {}),
+            **({"aliases": [row["doi"]]} if kind == "work" and row.get("doi") else {}),
         }
         for kind, label, state, rows in (
             ("work", "title", "quality", works),

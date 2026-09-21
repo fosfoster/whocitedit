@@ -858,6 +858,7 @@ def main() -> int:
                 "oa": bool(row["is_oa"]),
                 "quality": row["quality"] or quality.COMPLETE,
                 "fields": payload["fields"],
+                **({"doi": row["doi"]} if row["doi"] else {}),
             }
         )
     total_bytes = 0
