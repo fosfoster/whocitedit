@@ -1005,9 +1005,9 @@ def is_comparable(work: dict, field: str) -> bool:
 def source_observations(work: dict, field: str, source: str) -> list[dict]:
     """Return OpenAlex and every requested source assertion without merging them.
 
-    `source_comparison` keeps every Crossref and Europe PMC assertion, except
-    for Europe PMC venue assertions, which are available in the older,
-    one-observation `record_comparison` block.
+    `source_comparison` keeps every Crossref and Europe PMC assertion. The
+    `record_comparison` fallback retains the one Europe PMC venue observation
+    exported by older payloads.
     """
     source_comparison = work.get("source_comparison")
     source_field = (
@@ -1036,6 +1036,15 @@ def source_observations(work: dict, field: str, source: str) -> list[dict]:
         if isinstance(europepmc, dict):
             observations.append(europepmc)
     return observations
+
+
+def source_observations_are_comparable(observations: list[dict]) -> bool:
+    """Whether OpenAlex and the named source both supplied a field value."""
+    return (
+        len(observations) > 1
+        and bool(observations[0].get("value"))
+        and any(observation.get("value") for observation in observations[1:])
+    )
 
 
 def record_comparison_html(comparison: dict | None, payloads: dict) -> str:
@@ -2007,6 +2016,61 @@ def render_cohort(kind: str, band: str, index_rows: list) -> str:
     )
 
 
+def source_observation_cell(observations: list[dict]) -> str:
+    """Render parallel values without choosing or reconciling among them."""
+    if not observations:
+        return '<span class="faint">No observation exported.</span>'
+    rows = []
+    for observation in observations:
+        value = (
+            e(observation.get("value"))
+            if observation.get("value")
+            else '<span class="faint">not asserted</span>'
+        )
+        rows.append(
+            f'<li>{value} <span class="mono faint">sha256 {e(observation.get("raw"))}</span></li>'
+        )
+    return f'<ul class="evidence">{"".join(rows)}</ul>'
+
+
+def render_source_disagreement_cohort(field: str, source: str, works_index: list,
+                                       members: dict[str, list[dict]],
+                                       comparable_total: int) -> str:
+    """Render one uncapped source-disagreement cohort in works-index order."""
+    config = SOURCE_DISAGREEMENT_COHORTS[(field, source)]
+    rows = [work for work in works_index if work["id"] in members]
+    body_rows = "".join(
+        f'<tr><td><a href="../../../w/{e(work["id"])}/">{e(work["title"])}</a></td>'
+        f'<td>{source_observation_cell(members[work["id"]][:1])}</td>'
+        f'<td>{source_observation_cell(members[work["id"]][1:])}</td></tr>'
+        for work in rows
+    )
+    member_total = len(rows)
+    if member_total:
+        result = "Every matching record is shown below."
+    else:
+        result = "No works in this release match this disagreement cohort."
+    title = f'{config["field_label"]} disagreements asserted by {config["source_label"]}'
+    body = f"""
+<h1>{title}</h1>
+<p class="lede">{num(member_total)} of {num(comparable_total)} comparable works disagree between
+   OpenAlex and {config["source_label"]} on {config["field_label"].lower()}. {result}</p>
+<div class="scroll"><table>
+  <thead><tr><th>Paper</th><th>OpenAlex</th><th>{config["source_label"]}</th></tr></thead>
+  <tbody>{body_rows}</tbody>
+</table></div>
+"""
+    return page(
+        title=f"{title} — {SITE_NAME}",
+        description=(
+            f'{member_total} of {comparable_total} comparable works have a '
+            f'{config["field_label"].lower()} disagreement asserted by {config["source_label"]}.'
+        ),
+        body=body,
+        path=config["path"],
+    )
+
+
 # These cohorts are an honesty layer over the exported source record.  They use
 # the quality evidence already calculated upstream, then join that membership
 # back to works-index so their display fields and ordering stay export-driven.
@@ -2292,6 +2356,12 @@ def main() -> int:
     topic_ids = set(topic_payloads)
     work_raw = {}
     integrity_members = {signal: set() for signal in WORK_INTEGRITY_COHORTS}
+    source_disagreement_members = {
+        cohort: {} for cohort in SOURCE_DISAGREEMENT_COHORTS
+    }
+    source_comparable_totals = {
+        cohort: 0 for cohort in SOURCE_DISAGREEMENT_COHORTS
+    }
 
     for shard in sorted((DATA / "works").glob("*.json")):
         for wid, w in json.loads(shard.read_text()).items():
@@ -2305,6 +2375,14 @@ def main() -> int:
                 if (item["signal"] in integrity_members
                         and item["direction"] == "weakens"):
                     integrity_members[item["signal"]].add(wid)
+            for field, source in SOURCE_DISAGREEMENT_COHORTS:
+                cohort = (field, source)
+                observations = source_observations(w, field, source)
+                if (is_comparable(w, field)
+                        and source_observations_are_comparable(observations)):
+                    source_comparable_totals[cohort] += 1
+                if disagrees_with(w, field, source):
+                    source_disagreement_members[cohort][wid] = observations
             total += write(
                 f"w/{wid}/index.html",
                 render_work(w, author_names, titles, payloads, quality_notes, topic_ids),
@@ -2354,10 +2432,21 @@ def main() -> int:
                 f"{path}index.html",
                 render_integrity_cohort(signal, works_index, integrity_members[signal], path),
             )
+    for (field, source), config in SOURCE_DISAGREEMENT_COHORTS.items():
+        total += write(
+            f'{config["path"]}index.html',
+            render_source_disagreement_cohort(
+                field,
+                source,
+                works_index,
+                source_disagreement_members[(field, source)],
+                source_comparable_totals[(field, source)],
+            ),
+        )
     total += write("institutions/index.html", render_browse("institutions", institutions_index, corpus))
     total += write("topics/index.html", render_browse("topics", topics_index, corpus))
     total += write("methodology/index.html", render_methodology(corpus))
-    n += 10 + len(fields_index) + sum(
+    n += 10 + len(fields_index) + len(SOURCE_DISAGREEMENT_COHORTS) + sum(
         1 + len(config.get("legacy_paths", ()))
         for config in WORK_INTEGRITY_COHORTS.values()
     )
@@ -2392,6 +2481,7 @@ def main() -> int:
         + [path
            for config in WORK_INTEGRITY_COHORTS.values()
            for path in (config["path"], *config.get("legacy_paths", ()))]
+        + [config["path"] for config in SOURCE_DISAGREEMENT_COHORTS.values()]
         + [f"fields/{field['key']}/" for field in fields_index]
         + [f"w/{w['id']}/" for w in works_index]
         + [f"a/{a['id']}/" for a in authors_index]
