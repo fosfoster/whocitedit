@@ -1296,7 +1296,12 @@ def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
         ),
         body=body,
         path=f"w/{wid}/",
-        extra_head=work_head_metadata(w, canonical_url(f"w/{wid}/")),
+        extra_head=(
+            work_head_metadata(w, canonical_url(f"w/{wid}/"))
+            + breadcrumb_json_ld([
+                ("Home", ""), ("Papers", "works/"), (w["title"], f"w/{wid}/"),
+            ])
+        ),
         island=True,
     )
 
@@ -1404,7 +1409,12 @@ def render_author(a: dict, notes: dict, bands: dict, payloads: dict,
         ),
         body=body,
         path=f"a/{a['id']}/",
-        extra_head=author_head_metadata(a, canonical_url(f"a/{a['id']}/")),
+        extra_head=(
+            author_head_metadata(a, canonical_url(f"a/{a['id']}/"))
+            + breadcrumb_json_ld([
+                ("Home", ""), ("Authors", "authors/"), (a["name"], f"a/{a['id']}/"),
+            ])
+        ),
         island=True,
     )
 
@@ -1487,7 +1497,12 @@ def render_institution(i: dict, payloads: dict, author_ids: set[str],
         description=f'{i["name"]}: affiliated authors, works, and a precomputed collaboration graph.',
         body=body,
         path=f"i/{iid}/",
-        extra_head=institution_head_metadata(i, canonical_url(f"i/{iid}/")),
+        extra_head=(
+            institution_head_metadata(i, canonical_url(f"i/{iid}/"))
+            + breadcrumb_json_ld([
+                ("Home", ""), ("Institutions", "institutions/"), (i["name"], f"i/{iid}/"),
+            ])
+        ),
     )
 
 
@@ -1548,7 +1563,12 @@ def render_topic(t: dict, payloads: dict, work_ids: set[str], author_ids: set[st
         description=f'{t["name"]}: citation-ranked works and participating authors.',
         body=body,
         path=f"t/{t['id']}/",
-        extra_head=topic_head_metadata(t, canonical_url(f"t/{t['id']}/")),
+        extra_head=(
+            topic_head_metadata(t, canonical_url(f"t/{t['id']}/"))
+            + breadcrumb_json_ld([
+                ("Home", ""), ("Topics", "topics/"), (t["name"], f"t/{t['id']}/"),
+            ])
+        ),
     )
 
 
