@@ -237,6 +237,58 @@ def test_reader_critical_asset_hashes():
     return 1 if bad else 0
 
 
+def test_work_download_hashes():
+    bad = 0
+    with offline_fixture() as (site, _, assets, responses):
+        for download_name in check_deploy.WORK_DOWNLOADS:
+            route = f"/w/W1/{download_name}"
+            drifted = dict(responses)
+            drifted[route] = responses[route] + b"tampered"
+            code, output, _ = run_case(site, assets, drifted)
+            row = next((line for line in output.splitlines()
+                        if line.startswith(f"Download SHA-256 {route}")), "")
+            local_hash = hashlib.sha256(responses[route]).hexdigest()
+            remote_hash = hashlib.sha256(drifted[route]).hexdigest()
+            bad += check(
+                code == 1 and "FAIL" in row and f"local {local_hash}; remote {remote_hash}" in row,
+                f"drifting {download_name} alone did not fail its download hash row",
+            )
+            for other_name in check_deploy.WORK_DOWNLOADS:
+                if other_name == download_name:
+                    continue
+                other_route = f"/w/W1/{other_name}"
+                other_row = next((line for line in output.splitlines()
+                                  if line.startswith(f"Download SHA-256 {other_route}")), "")
+                bad += check("PASS" in other_row,
+                             f"drifting {download_name} incorrectly failed {other_name}'s hash row")
+            work_html_row = next((line for line in output.splitlines()
+                                  if line.startswith("HTML SHA-256 /w/W1/")), "")
+            bad += check("PASS" in work_html_row,
+                         f"drifting {download_name} incorrectly failed the work HTML hash row")
+
+        missing_site = site.parent / "missing-download-site"
+        shutil.copytree(site, missing_site)
+        (missing_site / "w/W1/citation.bib").unlink()
+        code, output, _ = run_case(missing_site, assets, responses)
+        row = next((line for line in output.splitlines()
+                    if line.startswith("Download SHA-256 /w/W1/citation.bib")), "")
+        bad += check(code == 1 and "FAIL" in row and "missing local" in row,
+                     "a missing local work download did not fail with a missing-local detail")
+
+        def unavailable_ris(url):
+            if url == BASE_URL + "/w/W1/citation.ris":
+                return check_deploy.Response(404, b"not found")
+            return check_deploy.Response(200, responses[url.removeprefix(BASE_URL)])
+
+        output = io.StringIO()
+        code = check_deploy.check_deploy(BASE_URL, site, assets, unavailable_ris, output)
+        row = next((line for line in output.getvalue().splitlines()
+                    if line.startswith("Download SHA-256 /w/W1/citation.ris")), "")
+        bad += check(code == 1 and "FAIL" in row and "remote download unavailable" in row,
+                     "an unavailable remote work download did not fail without returning exit 2")
+    return 1 if bad else 0
+
+
 def main():
     bad = 0
     with offline_fixture() as (site, pages, assets, responses):
@@ -257,6 +309,14 @@ def main():
                         if line.startswith(f"HTTP /w/W1/{download_name}")), "")
             bad += check("PASS" in row and "200" in row,
                          f"matching deployment did not pass {download_name}'s HTTP row")
+            route = f"/w/W1/{download_name}"
+            hash_row = next((line for line in output.splitlines()
+                             if line.startswith(f"Download SHA-256 {route}")), "")
+            content_hash = hashlib.sha256(responses[route]).hexdigest()
+            bad += check(
+                "PASS" in hash_row and f"local {content_hash}; remote {content_hash}" in hash_row,
+                f"matching deployment did not report matching download hashes for {download_name}",
+            )
         for route in ("/", "/methodology/"):
             row = next((line for line in output.splitlines()
                         if line.startswith(f"HTML SHA-256 {route}")), "")
@@ -356,6 +416,7 @@ def main():
     bad += test_detail_html_content_drift()
     bad += test_sitemap_route_set_parity()
     bad += test_reader_critical_asset_hashes()
+    bad += test_work_download_hashes()
 
     print("test_check_deploy:", "FAILED" if bad else "ok")
     return 1 if bad else 0
