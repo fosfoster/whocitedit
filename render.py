@@ -815,7 +815,10 @@ def evidence_html(evidence: list[dict], notes: dict) -> str:
     rows = []
     for item in evidence:
         signal, direction = item["signal"], item["direction"]
-        template = (notes.get(signal) or {}).get(direction)
+        templates = notes.get(signal) or {}
+        verdict = item.get("verdict")
+        template = templates.get(verdict) if isinstance(verdict, str) else None
+        template = template or templates.get(direction)
         value = item.get("value")
         if template:
             pct = f"{value:.0%}" if isinstance(value, float) else ""
