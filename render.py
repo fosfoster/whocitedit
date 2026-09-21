@@ -320,6 +320,14 @@ def home_head_metadata(canonical: str) -> str:
         "name": SITE_NAME,
         "description": TAGLINE,
         "inLanguage": "en",
+        "potentialAction": {
+            "@type": "SearchAction",
+            "target": {
+                "@type": "EntryPoint",
+                "urlTemplate": f"{SITE_URL}/?q={{search_term_string}}",
+            },
+            "query-input": "required name=search_term_string",
+        },
     }
     return json_ld(website)
 
