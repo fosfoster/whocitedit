@@ -144,11 +144,11 @@ def _source_comparison(
     Unlike `_crossref_comparison` above, which compares against only the
     earliest envelope, this keeps every observation so a reader can see all of
     them -- and a work's combined status disagrees if any one of them does,
-    even when another agrees. Venue and work type stay Crossref-only, two-way
-    (`agree`/`disagree`/`unavailable`) statuses, since Europe PMC's search
-    result carries no work-type assertion to compare and its venue field is
-    folded elsewhere; title and date carry the four-way verdict from
-    `quality.source_verdict`, which names which source, if either, disagrees.
+    even when another agrees. Work type stays Crossref-only because Europe PMC
+    carries no work-type assertion. Venue keeps its legacy Crossref status but
+    includes every Europe PMC venue observation; title and date carry the
+    four-way verdict from `quality.source_verdict`, which names which source,
+    if either, disagrees.
     """
     rows = conn.execute(
         "SELECT raw_sha, venue, venue_short, work_type, title, published FROM crossref_work_assertion "
@@ -156,7 +156,7 @@ def _source_comparison(
         (wid,),
     ).fetchall()
     europepmc_rows = conn.execute(
-        "SELECT raw_sha, title, publication_date FROM europepmc_work_assertion "
+        "SELECT raw_sha, title, venue, venue_short, publication_date FROM europepmc_work_assertion "
         "WHERE work_id = ? ORDER BY raw_sha",
         (wid,),
     ).fetchall()
@@ -164,6 +164,10 @@ def _source_comparison(
     venue_crossref = [
         {"source": "Crossref", "value": r["venue"] or r["venue_short"], "raw": r["raw_sha"]}
         for r in rows
+    ]
+    venue_europepmc = [
+        {"source": "Europe PMC", "value": r["venue"] or r["venue_short"], "raw": r["raw_sha"]}
+        for r in europepmc_rows
     ]
     type_crossref = [
         {"source": "Crossref", "value": r["work_type"], "raw": r["raw_sha"]}
@@ -209,6 +213,7 @@ def _source_comparison(
         "venue": {
             "openalex": {"source": "OpenAlex", "value": source_name, "raw": raw_sha},
             "crossref": venue_crossref,
+            "europepmc": venue_europepmc,
             "status": venue_status,
         },
         "work_type": {
