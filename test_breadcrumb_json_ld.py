@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""Offline coverage for the BreadcrumbList JSON-LD on every listing page:
-the four browse kinds, the fields directory, and every field page (including
-the legacy no-fields-export release path)."""
+"""Offline coverage for BreadcrumbList JSON-LD on the field directory and pages."""
 import json
 import re
 import shutil
@@ -127,10 +125,6 @@ def main() -> int:
 
         site = render.SITE
         expected_pages = {
-            "works": [("Home", ""), ("Papers", "works/")],
-            "authors": [("Home", ""), ("Authors", "authors/")],
-            "institutions": [("Home", ""), ("Institutions", "institutions/")],
-            "topics": [("Home", ""), ("Topics", "topics/")],
             "fields": [("Home", ""), ("Fields", "fields/")],
         }
         for field in fields:

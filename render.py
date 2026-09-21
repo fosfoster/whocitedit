@@ -182,6 +182,37 @@ def breadcrumb_json_ld(trail: list[tuple[str, str]]) -> str:
     return json_ld(breadcrumb)
 
 
+def listing_metadata(canonical: str, name: str, entries: list[dict]) -> str:
+    """ItemList metadata for one of the public entity listings."""
+    kind = canonical.rsplit("/", 1)[-1]
+    prefix, name_key = {
+        "works": ("w", "title"),
+        "authors": ("a", "name"),
+        "institutions": ("i", "name"),
+        "topics": ("t", "name"),
+    }[kind]
+    return json_ld({
+        "@context": "https://schema.org",
+        "@type": "ItemList",
+        "@id": canonical,
+        "url": canonical,
+        "name": name,
+        "numberOfItems": len(entries),
+        "itemListElement": [
+            {
+                "@type": "ListItem",
+                "position": position,
+                "item": {
+                    "@id": canonical_url(f"{prefix}/{entry['id']}/"),
+                    "url": canonical_url(f"{prefix}/{entry['id']}/"),
+                    "name": entry[name_key],
+                },
+            }
+            for position, entry in enumerate(entries, start=1)
+        ],
+    })
+
+
 def work_head_metadata(w: dict, canonical: str) -> str:
     """Citation and CreativeWork metadata using only the exported work fields."""
     citation = [
@@ -1684,6 +1715,7 @@ def render_home(corpus: dict, works: list, authors: list,
 
 
 def render_browse(kind: str, rows: list, corpus: dict) -> str:
+    displayed = rows[:400]
     if kind == "works":
         head = ('<tr><th>Paper</th><th>Record</th><th class="num">Year</th>'
                 '<th class="num">Cited</th><th class="num">In corpus</th></tr>')
@@ -1693,7 +1725,7 @@ def render_browse(kind: str, rows: list, corpus: dict) -> str:
             f'<td>{badge(r.get("quality"), hide="complete")}</td>' 
             f'<td class="num">{e(r["year"] or "")}</td><td class="num">{num(r["cited"])}</td>'
             f'<td class="num">{num(r["in_corpus_cited"])}</td></tr>'
-            for r in rows[:400]
+            for r in displayed
         )
         title, index = "Papers", "works-index.json"
     elif kind == "authors":
@@ -1703,7 +1735,7 @@ def render_browse(kind: str, rows: list, corpus: dict) -> str:
             f'<td><span class="badge {r["band"]}">{r["band"]}</span></td>'
             f'<td class="num">{num(r["works"])}</td><td class="num">{num(r["coauthors"])}</td>'
             f'<td class="num">{num(r["cited"])}</td></tr>'
-            for r in rows[:400]
+            for r in displayed
         )
         title, index = "Authors", "authors-index.json"
     elif kind == "institutions":
@@ -1713,7 +1745,7 @@ def render_browse(kind: str, rows: list, corpus: dict) -> str:
             f'<td class="num">{num(r.get("authors") or 0)}</td>'
             f'<td class="num">{num(r.get("works") or 0)}</td>'
             f'<td class="num">{num(r.get("graph") or 0)}</td></tr>'
-            for r in rows[:400]
+            for r in displayed
         )
         title, index = "Institutions", "institutions-index.json"
     else:
@@ -1722,7 +1754,7 @@ def render_browse(kind: str, rows: list, corpus: dict) -> str:
             f'<tr><td><a href="../t/{e(r["id"])}/">{e(r["name"])}</a></td>'
             f'<td class="num">{num(r.get("works") or 0)}</td>'
             f'<td class="num">{num(r.get("authors") or 0)}</td></tr>'
-            for r in rows[:400]
+            for r in displayed
         )
         title, index = "Topics", "topics-index.json"
 
@@ -1743,7 +1775,7 @@ def render_browse(kind: str, rows: list, corpus: dict) -> str:
         description=f"All {num(len(rows))} {title.lower()} in the {corpus_label(corpus)} corpus.",
         body=body,
         path=f"{kind}/",
-        extra_head=breadcrumb_json_ld([("Home", ""), (title, f"{kind}/")]),
+        extra_head=listing_metadata(canonical_url(f"{kind}/"), title, displayed),
     )
 
 
