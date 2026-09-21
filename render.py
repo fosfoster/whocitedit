@@ -38,6 +38,7 @@ from urllib.parse import urlsplit
 
 import corpus_contract
 from opencitations import normalize_doi
+import quality
 
 ROOT = Path(__file__).parent
 DATA = ROOT / "web" / "data"
@@ -931,6 +932,110 @@ def crossref_comparison_html(comparison: dict | None) -> str:
 
 
 SOURCE_LABELS = {"openalex": "OpenAlex", "crossref": "Crossref", "europepmc": "Europe PMC"}
+
+
+# Source disagreement cohorts remain separate because either source can
+# disagree with OpenAlex for the same field. A work whose verdict is
+# `both_disagree` belongs to both source cohorts for that field.
+SOURCE_DISAGREEMENT_COHORTS = {
+    ("title", "crossref"): {
+        "path": "works/title-disagreement/crossref/",
+        "source_label": "Crossref",
+        "field_label": "Title",
+    },
+    ("title", "europepmc"): {
+        "path": "works/title-disagreement/europepmc/",
+        "source_label": "Europe PMC",
+        "field_label": "Title",
+    },
+    ("venue", "crossref"): {
+        "path": "works/venue-disagreement/crossref/",
+        "source_label": "Crossref",
+        "field_label": "Venue",
+    },
+    ("venue", "europepmc"): {
+        "path": "works/venue-disagreement/europepmc/",
+        "source_label": "Europe PMC",
+        "field_label": "Venue",
+    },
+    ("date", "crossref"): {
+        "path": "works/date-disagreement/crossref/",
+        "source_label": "Crossref",
+        "field_label": "Publication date",
+    },
+    ("date", "europepmc"): {
+        "path": "works/date-disagreement/europepmc/",
+        "source_label": "Europe PMC",
+        "field_label": "Publication date",
+    },
+}
+
+
+def source_verdict_for(work: dict, field: str) -> str | None:
+    """Return this field's exported source-comparison quality verdict, if any."""
+    quality_data = work.get("quality")
+    if not isinstance(quality_data, dict):
+        return None
+    evidence = quality_data.get("evidence")
+    if not isinstance(evidence, list):
+        return None
+    for item in evidence:
+        if isinstance(item, dict) and item.get("signal") == f"{field}_source":
+            verdict = item.get("verdict")
+            return verdict if isinstance(verdict, str) else None
+    return None
+
+
+def disagrees_with(work: dict, field: str, source: str) -> bool:
+    """Whether `source` disagrees with OpenAlex for this field."""
+    verdict = source_verdict_for(work, field)
+    if source == "crossref":
+        return verdict in (quality.CROSSREF_DISAGREES, quality.BOTH_DISAGREE)
+    if source == "europepmc":
+        return verdict in (quality.EUROPEPMC_DISAGREES, quality.BOTH_DISAGREE)
+    return False
+
+
+def is_comparable(work: dict, field: str) -> bool:
+    """Whether a source-comparison verdict exists for the field."""
+    verdict = source_verdict_for(work, field)
+    return verdict is not None and verdict != quality.UNAVAILABLE
+
+
+def source_observations(work: dict, field: str, source: str) -> list[dict]:
+    """Return OpenAlex and every requested source assertion without merging them.
+
+    `source_comparison` keeps every Crossref and Europe PMC assertion, except
+    for Europe PMC venue assertions, which are available in the older,
+    one-observation `record_comparison` block.
+    """
+    source_comparison = work.get("source_comparison")
+    source_field = (
+        source_comparison.get(field)
+        if isinstance(source_comparison, dict) else None
+    )
+    record_comparison = work.get("record_comparison")
+    record_field = (
+        record_comparison.get(field)
+        if isinstance(record_comparison, dict) else None
+    )
+
+    openalex = source_field.get("openalex") if isinstance(source_field, dict) else None
+    if not isinstance(openalex, dict) and isinstance(record_field, dict):
+        openalex = record_field.get("openalex")
+    observations = [openalex] if isinstance(openalex, dict) else []
+
+    asserted = source_field.get(source) if isinstance(source_field, dict) else None
+    if isinstance(asserted, list):
+        observations.extend(item for item in asserted if isinstance(item, dict))
+    elif isinstance(asserted, dict):
+        observations.append(asserted)
+
+    if not asserted and field == "venue" and source == "europepmc" and isinstance(record_field, dict):
+        europepmc = record_field.get("europepmc")
+        if isinstance(europepmc, dict):
+            observations.append(europepmc)
+    return observations
 
 
 def record_comparison_html(comparison: dict | None, payloads: dict) -> str:
