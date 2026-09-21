@@ -421,8 +421,11 @@ def work_graph(conn, wid: str, titles: dict[str, dict]) -> dict:
     keep_citers = citers[: budget - len(keep_refs)]
 
     node_ids = [wid] + keep_refs + keep_citers
-    edge_sources = {
-        (r["citing_id"], r["cited_id"]): json.loads(r["sources"])
+    edge_evidence = {
+        (r["citing_id"], r["cited_id"]): {
+            "sources": json.loads(r["sources"]),
+            "assertions": [],
+        }
         for r in conn.execute(
             "SELECT citing_id, cited_id, sources FROM citation "
             "WHERE citing_id IN ({marks}) AND cited_id IN ({marks})".format(
@@ -431,9 +434,20 @@ def work_graph(conn, wid: str, titles: dict[str, dict]) -> dict:
             node_ids + node_ids,
         )
     }
+    for row in conn.execute(
+        "SELECT citing_id, cited_id, source, raw_sha FROM citation_assertion "
+        "WHERE citing_id IN ({marks}) AND cited_id IN ({marks}) "
+        "ORDER BY citing_id, cited_id, source".format(
+            marks=",".join("?" for _ in node_ids),
+        ),
+        node_ids + node_ids,
+    ):
+        edge_evidence[(row["citing_id"], row["cited_id"])]["assertions"].append(
+            {"source": row["source"], "raw": row["raw_sha"]}
+        )
     edges = (
-        [(c, wid, 1.0, edge_sources[(c, wid)]) for c in keep_citers]
-        + [(wid, r, 1.0, edge_sources[(wid, r)]) for r in keep_refs]
+        [(c, wid, 1.0, edge_evidence[(c, wid)]) for c in keep_citers]
+        + [(wid, r, 1.0, edge_evidence[(wid, r)]) for r in keep_refs]
     )
 
     # EDGES AMONG THE NEIGHBOURS, not only to the focus. Without these the graph
@@ -445,12 +459,12 @@ def work_graph(conn, wid: str, titles: dict[str, dict]) -> dict:
     if inner:
         marks = ",".join("?" * len(inner))
         rows = conn.execute(
-            f"SELECT citing_id, cited_id, sources FROM citation "
+            f"SELECT citing_id, cited_id FROM citation "
             f"WHERE citing_id IN ({marks}) AND cited_id IN ({marks})",
             list(inner) + list(inner),
         )
         edges += [
-            (r["citing_id"], r["cited_id"], 0.6, json.loads(r["sources"]))
+            (r["citing_id"], r["cited_id"], 0.6, edge_evidence[(r["citing_id"], r["cited_id"])])
             for r in rows
         ]
 
@@ -478,9 +492,10 @@ def work_graph(conn, wid: str, titles: dict[str, dict]) -> dict:
         + [node(n, "reference") for n in keep_refs]
         + [node(n, "citer") for n in keep_citers],
         "edges": [
-            {"s": s, "t": t, "sources": sources,
+            {"s": s, "t": t, "sources": evidence["sources"],
+             "assertions": evidence["assertions"],
              **({"inner": True} if wid not in (s, t) else {})}
-            for s, t, _, sources in edges
+            for s, t, _, evidence in edges
         ],
         "shown": len(node_ids) - 1,
         "available": total,
