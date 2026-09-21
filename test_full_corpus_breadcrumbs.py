@@ -39,15 +39,59 @@ def rendered_site():
         shutil.rmtree(temporary, ignore_errors=True)
 
 
-def load_index(name: str) -> list[dict]:
+def load_index_ids(name: str, kind: str) -> set[str]:
     data = json.loads((DATA / name).read_text())
     if not isinstance(data, list):
         raise AssertionError(f"{name} is not a list")
-    return data
+    identifiers = []
+    for row in data:
+        identifier = row.get("id") if isinstance(row, dict) else None
+        if not isinstance(identifier, str) or not identifier:
+            raise AssertionError(f"{kind} index row has no usable ID: {row!r}")
+        identifiers.append(identifier)
+    if len(identifiers) != len(set(identifiers)):
+        duplicate = next(i for i in identifiers if identifiers.count(i) > 1)
+        raise AssertionError(f"{kind} {duplicate!r}: duplicate ID in {name}")
+    return set(identifiers)
+
+
+def load_committed_records(directory: str, kind: str) -> dict[str, dict]:
+    records = {}
+    for shard in sorted((DATA / directory).glob("*.json")):
+        data = json.loads(shard.read_text())
+        if not isinstance(data, dict):
+            raise AssertionError(f"{shard.relative_to(ROOT)} is not an object")
+        for identifier, row in data.items():
+            label = f"{kind} {identifier!r}"
+            if not isinstance(identifier, str) or not identifier:
+                raise AssertionError(f"{label}: shard key is not a usable ID")
+            if identifier in records:
+                raise AssertionError(f"{label}: duplicate ID in committed shards")
+            if not isinstance(row, dict) or row.get("id") != identifier:
+                raise AssertionError(f"{label}: shard record has a mismatched ID")
+            records[identifier] = row
+    return records
 
 
 def canonical_url(path: str) -> str:
     return f"{SITE_URL}/{path}".rstrip("/") or SITE_URL
+
+
+def breadcrumb_lists(metadata: object) -> list[dict]:
+    if isinstance(metadata, dict):
+        found = [metadata] if metadata.get("@type") == "BreadcrumbList" else []
+        return found + [
+            breadcrumb
+            for value in metadata.values()
+            for breadcrumb in breadcrumb_lists(value)
+        ]
+    if isinstance(metadata, list):
+        return [
+            breadcrumb
+            for value in metadata
+            for breadcrumb in breadcrumb_lists(value)
+        ]
+    return []
 
 
 def breadcrumbs_in_head(html: str) -> tuple[list[dict], str | None]:
@@ -60,26 +104,28 @@ def breadcrumbs_in_head(html: str) -> tuple[list[dict], str | None]:
             metadata = json.loads(block)
         except json.JSONDecodeError:
             return [], "page head contains malformed JSON-LD"
-        if isinstance(metadata, dict) and metadata.get("@type") == "BreadcrumbList":
-            breadcrumbs.append(metadata)
+        breadcrumbs.extend(breadcrumb_lists(metadata))
     return breadcrumbs, None
 
 
-def audit_page(site: Path, kind: str, row: dict) -> str | None:
-    identifier = row.get("id")
+def rendered_pages(site: Path, prefix: str) -> dict[str, Path]:
+    return {
+        page.parent.name: page
+        for page in sorted((site / prefix).glob("*/index.html"))
+    }
+
+
+def audit_page(page: Path, kind: str, identifier: str, row: dict | None) -> str | None:
     name_key = "title" if kind == "work" else "name"
     collection, collection_path, prefix = (
         ("Papers", "works", "w") if kind == "work" else ("Authors", "authors", "a")
     )
     label = f"{kind} {identifier!r}"
-    if not isinstance(identifier, str) or not identifier:
-        return f"{label}: index row has no usable ID"
+    if row is None:
+        return f"{label}: rendered page has no committed shard record"
     if not isinstance(row.get(name_key), str):
-        return f"{label}: index row has no usable {name_key}"
+        return f"{label}: shard record has no usable {name_key}"
 
-    page = site / prefix / identifier / "index.html"
-    if not page.exists():
-        return f"{label}: rendered page is missing"
     breadcrumbs, error = breadcrumbs_in_head(page.read_text())
     if error:
         return f"{label}: {error}"
@@ -111,22 +157,42 @@ def audit_page(site: Path, kind: str, row: dict) -> str | None:
 
 def main() -> int:
     try:
-        works = load_index("works-index.json")
-        authors = load_index("authors-index.json")
+        indexes = {
+            "work": load_index_ids("works-index.json", "work"),
+            "author": load_index_ids("authors-index.json", "author"),
+        }
+        records = {
+            "work": load_committed_records("works", "work"),
+            "author": load_committed_records("authors", "author"),
+        }
         with rendered_site() as site:
-            failures = [
-                failure
-                for kind, rows in (("work", works), ("author", authors))
-                for row in rows
-                if (failure := audit_page(site, kind, row))
-            ]
+            pages = {
+                "work": rendered_pages(site, "w"),
+                "author": rendered_pages(site, "a"),
+            }
+            failures = []
+            for kind in ("work", "author"):
+                for identifier in sorted(indexes[kind] - records[kind].keys()):
+                    failures.append(
+                        f"{kind} {identifier!r}: indexed ID has no committed shard record"
+                    )
+                for identifier in sorted(records[kind].keys() - pages[kind].keys()):
+                    failures.append(
+                        f"{kind} {identifier!r}: committed shard page was not rendered"
+                    )
+                for identifier, page in pages[kind].items():
+                    failure = audit_page(
+                        page, kind, identifier, records[kind].get(identifier)
+                    )
+                    if failure:
+                        failures.append(failure)
     except AssertionError as error:
         print(f"test_full_corpus_breadcrumbs: FAILED: {error}")
         return 1
 
     print(
         "test_full_corpus_breadcrumbs: audited "
-        f"works={len(works)} authors={len(authors)}"
+        f"works={len(pages['work'])} authors={len(pages['author'])}"
     )
     if failures:
         print("test_full_corpus_breadcrumbs: FAILED:")
