@@ -169,14 +169,14 @@ def _field_keys(observations: list[dict], definitions: dict[str, dict], sha: str
 
 def load(conn) -> dict:
     stats = {"payloads": 0, "works": 0, "authors": 0, "authorships": 0}
-    references: dict[str, list[str]] = {}
-    coci_assertions: list[tuple[str, str]] = []
+    references: list[tuple[str, str, str]] = []
+    coci_assertions: list[tuple[str, str, str]] = []
     crossref_envelopes: list[tuple[str, dict]] = []
-    crossref_reference_assertions: list[tuple[str, str]] = []
-    arxiv_reference_assertions: list[tuple[str, str]] = []
-    semanticscholar_reference_assertions: list[tuple[str, str]] = []
+    crossref_reference_assertions: list[tuple[str, str, str]] = []
+    arxiv_reference_assertions: list[tuple[str, str, str]] = []
+    semanticscholar_reference_assertions: list[tuple[str, str, str]] = []
     europepmc_search_dois: dict[tuple[str, str], str] = {}
-    europepmc_reference_assertions: list[tuple[tuple[str, str], str]] = []
+    europepmc_reference_assertions: list[tuple[tuple[str, str], str, str]] = []
     europepmc_results: list[tuple[str, dict]] = []
     definitions = _load_fields(conn)
 
@@ -193,7 +193,7 @@ def load(conn) -> dict:
         if not isinstance(payload, dict):
             if isinstance(payload, list):
                 coci_assertions.extend(
-                    (obj.get("citing"), obj.get("cited"))
+                    (obj.get("citing"), obj.get("cited"), rec["sha256"])
                     for obj in payload
                     if isinstance(obj, dict)
                 )
@@ -208,7 +208,8 @@ def load(conn) -> dict:
             citing_doi = message.get("DOI")
             if citing_doi:
                 crossref_reference_assertions.extend(
-                    (citing_doi, cited_doi) for cited_doi in crossref.reference_dois(payload)
+                    (citing_doi, cited_doi, rec["sha256"])
+                    for cited_doi in crossref.reference_dois(payload)
                 )
             continue
         # arXiv's Atom feed names each entry's own DOI directly, like Crossref,
@@ -223,7 +224,8 @@ def load(conn) -> dict:
                     continue
                 entry_payload = {"feed": {"entry": [entry]}}
                 arxiv_reference_assertions.extend(
-                    (citing_doi, cited_doi) for cited_doi in arxiv.reference_dois(entry_payload)
+                    (citing_doi, cited_doi, rec["sha256"])
+                    for cited_doi in arxiv.reference_dois(entry_payload)
                 )
             continue
         # A Semantic Scholar paper envelope names its own DOI and every
@@ -234,7 +236,7 @@ def load(conn) -> dict:
             citing_doi = (payload.get("externalIds") or {}).get("DOI")
             if citing_doi:
                 semanticscholar_reference_assertions.extend(
-                    (citing_doi, cited_doi)
+                    (citing_doi, cited_doi, rec["sha256"])
                     for cited_doi in semanticscholar.reference_dois(payload)
                 )
             continue
@@ -265,7 +267,9 @@ def load(conn) -> dict:
             citing_key = (request.get("source"), request.get("id"))
             for ref in (payload.get("referenceList") or {}).get("reference") or []:
                 if isinstance(ref, dict) and ref.get("doi"):
-                    europepmc_reference_assertions.append((citing_key, ref["doi"]))
+                    europepmc_reference_assertions.append(
+                        (citing_key, ref["doi"], rec["sha256"])
+                    )
             continue
         for obj in payload.get("results") or []:
             if _is_work(obj):
@@ -274,9 +278,10 @@ def load(conn) -> dict:
                     "INSERT OR IGNORE INTO work_corpus_field(work_id, field_key) VALUES(?, ?)",
                     [(wid, field_key) for field_key in _field_keys(observations, definitions, rec["sha256"])],
                 )
-                references[wid] = [
-                    short_id(r) for r in (obj.get("referenced_works") or [])
-                ]
+                references.extend(
+                    (wid, short_id(cited), rec["sha256"])
+                    for cited in (obj.get("referenced_works") or [])
+                )
                 stats["works"] += 1
             elif _is_author(obj):
                 _insert_author(conn, obj, rec["sha256"])
@@ -490,80 +495,89 @@ def _normalized_doi(value: str | None) -> str | None:
         return None
 
 
-def _insert_citations(conn, references: dict[str, list[str]],
-                      coci_assertions: list[tuple[str, str]],
+def _insert_citations(conn, references: list[tuple[str, str, str]],
+                      coci_assertions: list[tuple[str, str, str]],
                       europepmc_search_dois: dict[tuple[str, str], str],
-                      europepmc_reference_assertions: list[tuple[tuple[str, str], str]],
-                      crossref_reference_assertions: list[tuple[str, str]],
-                      arxiv_reference_assertions: list[tuple[str, str]],
-                      semanticscholar_reference_assertions: list[tuple[str, str]]) -> int:
+                      europepmc_reference_assertions: list[tuple[tuple[str, str], str, str]],
+                      crossref_reference_assertions: list[tuple[str, str, str]],
+                      arxiv_reference_assertions: list[tuple[str, str, str]],
+                      semanticscholar_reference_assertions: list[tuple[str, str, str]]) -> int:
     in_corpus = {r["id"] for r in conn.execute("SELECT id FROM work")}
-    assertions: dict[tuple[str, str], set[str]] = {}
+    assertions: dict[tuple[str, str, str], set[str]] = {}
 
-    for citing, cited_ids in references.items():
-        for cited in cited_ids:
-            if cited in in_corpus and cited != citing:
-                assertions.setdefault((citing, cited), set()).add("openalex")
+    def add(citing: str | None, cited: str | None, source: str, raw_sha: str) -> None:
+        if citing in in_corpus and cited in in_corpus and citing != cited:
+            assertions.setdefault((citing, cited, source), set()).add(raw_sha)
+
+    for citing, cited, raw_sha in references:
+        add(citing, cited, "openalex", raw_sha)
 
     doi_to_work = {}
     for row in conn.execute("SELECT id, doi FROM work ORDER BY id"):
         doi = _normalized_doi(row["doi"])
         if doi:
             doi_to_work.setdefault(doi, row["id"])
-    for citing_doi, cited_doi in coci_assertions:
+    for citing_doi, cited_doi, raw_sha in coci_assertions:
         citing = doi_to_work.get(_normalized_doi(citing_doi))
         cited = doi_to_work.get(_normalized_doi(cited_doi))
-        if citing and cited and citing != cited:
-            assertions.setdefault((citing, cited), set()).add("opencitations")
+        add(citing, cited, "opencitations", raw_sha)
 
     # A Europe PMC references payload names its citing article by (source, id),
     # never by DOI. Resolve that key against the stored search payload's echo
     # of the same pair before it can be joined to the in-corpus DOI index; an
     # unresolved key is dropped silently, exactly as an unknown COCI DOI is.
-    for citing_key, cited_doi in europepmc_reference_assertions:
+    for citing_key, cited_doi, raw_sha in europepmc_reference_assertions:
         citing_doi = europepmc_search_dois.get(citing_key)
         citing = doi_to_work.get(_normalized_doi(citing_doi))
         cited = doi_to_work.get(_normalized_doi(cited_doi))
-        if citing and cited and citing != cited:
-            assertions.setdefault((citing, cited), set()).add("europepmc")
+        add(citing, cited, "europepmc", raw_sha)
 
     # A Crossref work envelope's `reference` array names cited DOIs directly,
     # so no key resolution is needed here, unlike Europe PMC above. Resolve
     # both ends against the same in-corpus DOI index and drop an unresolved
     # DOI or self-pair silently, exactly as COCI and Europe PMC do.
-    for citing_doi, cited_doi in crossref_reference_assertions:
+    for citing_doi, cited_doi, raw_sha in crossref_reference_assertions:
         citing = doi_to_work.get(_normalized_doi(citing_doi))
         cited = doi_to_work.get(_normalized_doi(cited_doi))
-        if citing and cited and citing != cited:
-            assertions.setdefault((citing, cited), set()).add("crossref")
+        add(citing, cited, "crossref", raw_sha)
 
     # An arXiv Atom entry's `references` array names cited DOIs directly, just
     # like Crossref's `reference` array. Resolve both ends against the same
     # in-corpus DOI index and drop an unresolved DOI or self-pair silently.
-    for citing_doi, cited_doi in arxiv_reference_assertions:
+    for citing_doi, cited_doi, raw_sha in arxiv_reference_assertions:
         citing = doi_to_work.get(_normalized_doi(citing_doi))
         cited = doi_to_work.get(_normalized_doi(cited_doi))
-        if citing and cited and citing != cited:
-            assertions.setdefault((citing, cited), set()).add("arxiv")
+        add(citing, cited, "arxiv", raw_sha)
 
     # A Semantic Scholar paper envelope's `references` array names cited DOIs
     # directly, just like Crossref's `reference` array and arXiv's `references`
     # array. Resolve both ends against the same in-corpus DOI index and drop
     # an unresolved DOI or self-pair silently.
-    for citing_doi, cited_doi in semanticscholar_reference_assertions:
+    for citing_doi, cited_doi, raw_sha in semanticscholar_reference_assertions:
         citing = doi_to_work.get(_normalized_doi(citing_doi))
         cited = doi_to_work.get(_normalized_doi(cited_doi))
-        if citing and cited and citing != cited:
-            assertions.setdefault((citing, cited), set()).add("semanticscholar")
+        add(citing, cited, "semanticscholar", raw_sha)
 
+    assertion_rows = [
+        (citing, cited, source, min(raw_shas))
+        for (citing, cited, source), raw_shas in sorted(assertions.items())
+    ]
+    sources_by_edge: dict[tuple[str, str], list[str]] = {}
+    for citing, cited, source, _ in assertion_rows:
+        sources_by_edge.setdefault((citing, cited), []).append(source)
     rows = [
-        (citing, cited, graph.encode_sources(list(sources)))
-        for (citing, cited), sources in sorted(assertions.items())
+        (citing, cited, graph.encode_sources(sources))
+        for (citing, cited), sources in sorted(sources_by_edge.items())
     ]
     conn.executemany(
         "INSERT INTO citation(citing_id, cited_id, sources) VALUES(?,?,?) "
         "ON CONFLICT(citing_id, cited_id) DO UPDATE SET sources=excluded.sources",
         rows,
+    )
+    conn.executemany(
+        "INSERT INTO citation_assertion(citing_id, cited_id, source, raw_sha) VALUES(?,?,?,?) "
+        "ON CONFLICT(citing_id, cited_id, source) DO UPDATE SET raw_sha=excluded.raw_sha",
+        assertion_rows,
     )
     return conn.execute("SELECT COUNT(*) c FROM citation").fetchone()["c"]
 
