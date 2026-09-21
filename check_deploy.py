@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Compare a deployed Who Cited It site with the checked-in static render."""
+from __future__ import annotations
+
 import hashlib
 import sys
 from dataclasses import dataclass

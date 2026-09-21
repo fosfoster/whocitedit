@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Focused export-to-render provenance and citation-source contract."""
+from __future__ import annotations
+
 import json
 import shutil
 import sys

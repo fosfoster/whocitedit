@@ -7,6 +7,8 @@ This covers the layer built on top of them: the `source_comparison` export block
 the two new `quality.assess()` signals, and `derive.score_quality()` threading the
 per-work statuses through.
 """
+from __future__ import annotations
+
 import hashlib
 import json
 import shutil

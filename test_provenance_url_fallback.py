@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """An invalid or absent provenance source URL is shown as text, never as a link."""
+from __future__ import annotations
+
 import sys
 from html.parser import HTMLParser
 
