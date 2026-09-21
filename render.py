@@ -1892,7 +1892,14 @@ def render_browse(kind: str, rows: list, corpus: dict) -> str:
         description=f"All {num(len(rows))} {title.lower()} in the {corpus_label(corpus)} corpus.",
         body=body,
         path=f"{kind}/",
-        extra_head=listing_metadata(canonical_url(f"{kind}/"), title, displayed),
+        extra_head=(
+            listing_metadata(canonical_url(f"{kind}/"), title, displayed)
+            + (
+                breadcrumb_json_ld([("Home", ""), (title, f"{kind}/")])
+                if kind in {"works", "authors"}
+                else ""
+            )
+        ),
     )
 
 

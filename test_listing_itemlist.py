@@ -64,12 +64,17 @@ def main() -> int:
         rows = browse_rows(kind, 401)
         page = render.render_browse(kind, rows, corpus)
         _, blocks, lists = metadata(page)
-        item_list = lists[0] if lists else {}
+        item_list = next(
+            (metadata for metadata in lists if metadata.get("@type") == "ItemList"),
+            {},
+        )
         canonical = render.canonical_url(f"{kind}/")
         items = item_list.get("itemListElement", [])
         expected_rows = rows[:400]
 
-        bad += check(len(blocks) == 1, f"{kind} head does not contain exactly one JSON-LD block")
+        expected_blocks = 2 if kind in {"works", "authors"} else 1
+        bad += check(len(blocks) == expected_blocks,
+                     f"{kind} head does not contain exactly {expected_blocks} JSON-LD blocks")
         bad += check(item_list.get("@context") == "https://schema.org"
                      and item_list.get("@type") == "ItemList",
                      f"{kind} JSON-LD is not an ItemList")
