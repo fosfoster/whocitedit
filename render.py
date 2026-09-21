@@ -1525,27 +1525,9 @@ def render_topic(t: dict, payloads: dict, work_ids: set[str], author_ids: set[st
     )
 
 
-def field_summary_section(field: dict, field_works: list) -> str:
-    """Render one field's home-page summary: name, count, link, own members."""
-    rows = "".join(
-        f'<tr><td><a href="w/{e(w["id"])}/">{e(w["title"])}</a>'
-        f'<br><span class="meta faint">{e(", ".join(w["authors"]))}</span></td>'
-        f'<td class="num">{e(w["year"] or "")}</td><td class="num">{num(w["cited"])}</td>'
-        f'<td class="num">{num(w["in_corpus_cited"])}</td></tr>'
-        for w in field_works
-    )
-    return f"""
-<h2><a href="fields/{e(field['key'])}/">{e(field['name'])}</a></h2>
-<p class="meta">{num(field["works"])} papers &middot; <a href="fields/{e(field['key'])}/">Browse this field</a></p>
-<div class="scroll"><table>
-  <thead><tr><th>Paper</th><th class="num">Year</th><th class="num">Cited</th><th class="num">In corpus</th></tr></thead>
-  <tbody>{rows}</tbody>
-</table></div>
-"""
-
-
 def render_home(corpus: dict, works: list, authors: list,
-                 fields_index: list | None = None, field_works: dict | None = None) -> str:
+                fields: list[dict] | None = None,
+                field_works: dict[str, list] | None = None) -> str:
     c = corpus["counts"]
     top = "".join(
         f'<tr><td><a href="w/{e(w["id"])}/">{e(w["title"])}</a>'
@@ -1562,12 +1544,36 @@ def render_home(corpus: dict, works: list, authors: list,
         if w["year"]:
             year_counts[w["year"]] = year_counts.get(w["year"], 0) + 1
     low_pct = ident["low"] / max(sum(ident.values()), 1)
+    # One summary per normalized field, only once there is more than one to tell
+    # apart. A single-field corpus is the shipped release: it must keep the
+    # aggregate page byte for byte, so this stays "" and is interpolated with no
+    # surrounding whitespace of its own.
     field_sections = ""
-    if fields_index and len(fields_index) > 1:
-        field_sections = "".join(
-            field_summary_section(field, field_works[field["key"]])
-            for field in fields_index
-        )
+    if fields is not None and len(fields) > 1:
+        members_by_key = field_works or {}
+        panels = []
+        for field in fields:
+            members = members_by_key.get(field["key"], [])
+            count = field.get("works")
+            if count is None:
+                count = len(members)
+            rows = "".join(
+                f'<tr><td><a href="w/{e(member["id"])}/">{e(member["title"])}</a></td>'
+                f'<td class="num">{num(member["cited"])}</td></tr>'
+                for member in members[:5]
+            )
+            description = field.get("description")
+            blurb = f'\n  <p>{e(description)}</p>' if description else ""
+            panels.append(f"""<div class="panel">
+  <h2><a href="fields/{e(field["key"])}/">{e(field["name"])}</a></h2>
+  <p class="meta">{num(count)} papers</p>{blurb}
+  <div class="scroll"><table>
+    <thead><tr><th>Paper</th><th class="num">Cited</th></tr></thead>
+    <tbody>{rows or '<tr><td class="faint" colspan="2">No papers exported for this field.</td></tr>'}</tbody>
+  </table></div>
+</div>""")
+        field_sections = ('\n<div class="grid two-even">\n'
+                          + "\n".join(panels) + "\n</div>")
     body = f"""
 <h1>{TAGLINE}</h1>
 <p class="lede">{e(corpus_description(corpus))} Every page is precomputed and
@@ -1595,7 +1601,7 @@ def render_home(corpus: dict, works: list, authors: list,
      into one. We do not fix that silently. Each author page states how confident
      it is and shows you the signals, and nothing is ever merged away.
      <a href="methodology/">How that is judged</a>.</p>
-</div>
+</div>{field_sections}
 <div class="grid two-even">
 {bar_chart(sorted(year_counts.items()), label=f"Works by publication year ({len(year_counts)} years)")}
 </div>
@@ -1615,7 +1621,6 @@ def render_home(corpus: dict, works: list, authors: list,
   <thead><tr><th>Paper</th><th class="num">Year</th><th class="num">Cited</th><th class="num">In corpus</th></tr></thead>
   <tbody>{top}</tbody>
 </table></div>
-{field_sections}
 <p class="meta"><a href="works/">All {num(c["works"])} papers</a> &middot;
    <a href="fields/">Browse fields</a> &middot;
    <a href="authors/">All {num(c["authors"])} authors</a> &middot;
