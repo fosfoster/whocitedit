@@ -857,6 +857,23 @@ def cohort_summary(authors: list[dict], works: list[dict]) -> str:
     return f'<div class="cohort-summary" aria-label="Cohort summary">{"".join(summary)}</div>'
 
 
+def integrity_cohort_summary(counts: dict[str, int]) -> str:
+    """Link each work-record integrity count to its complete static cohort."""
+    rows = "".join(
+        f'<li data-signal="{e(signal)}"><span class="badge suspect">'
+        f'{e(config["home_label"])}</span>'
+        f'<a class="chart-cohort-link" href="{e(config["path"])}">'
+        f'<b>{num(counts.get(signal, 0))}</b></a></li>'
+        for signal, config in WORK_INTEGRITY_COHORTS.items()
+    )
+    return (
+        '<div class="cohort-summary" aria-label="Work-record integrity summary">'
+        '<section class="cohort-group" data-cohort="integrity">'
+        f'<p>Work-record integrity</p><ul class="cohort-bands chart-legend">{rows}</ul>'
+        '</section></div>'
+    )
+
+
 def evidence_html(evidence: list[dict], notes: dict) -> str:
     rows = []
     for item in evidence:
@@ -1846,6 +1863,13 @@ def render_home(corpus: dict, works: list, authors: list,
         if w["year"]:
             year_counts[w["year"]] = year_counts.get(w["year"], 0) + 1
     low_pct = ident["low"] / max(sum(ident.values()), 1)
+    integrity_counts = corpus.get("_integrity_cohort_counts")
+    if integrity_counts is None:
+        # Keep the established direct render_home(corpus, works, authors) path
+        # complete.  The compact works index does not carry evidence, so this
+        # fallback reads the same exported detail markers main() consumes.
+        integrity_counts = exported_integrity_counts(works)
+    integrity_summary = integrity_cohort_summary(integrity_counts)
     # One summary per normalized field, only once there is more than one to tell
     # apart. A single-field corpus is the shipped release: it must keep the
     # aggregate page byte for byte, so this stays "" and is interpolated with no
@@ -1917,6 +1941,7 @@ def render_home(corpus: dict, works: list, authors: list,
              label="Does each paper record agree with itself?",
              links={"partial": "works/partial/", "suspect": "works/suspect/"})}
 </div>
+{integrity_summary}
 
 <h2>Most cited</h2>
 <div class="scroll"><table>
@@ -2183,27 +2208,58 @@ def render_source_disagreement_cohort(field: str, source: str, works_index: list
 WORK_INTEGRITY_COHORTS = {
     "title": {
         "path": "works/missing-title/",
+        "home_label": "Missing titles",
         "title": "Records with no title",
         "lede": "these {n} records list no title at all",
     },
     "authors": {
         "path": "works/missing-authors/",
+        "home_label": "Missing authors",
         "title": "Records with no authors",
         "lede": "these {n} records list no authors at all",
     },
     "doi_year": {
         "path": "works/doi-year-disagreement/",
         "legacy_paths": ("works/doi-year-mismatch/",),
+        "home_label": "DOI-year disagreements",
         "title": "Records whose DOI-asserted year disagrees",
         "lede": "these {n} records carry a publication year that disagrees with the year asserted by their DOI",
     },
     "references": {
         "path": "works/heavily-cited-no-references/",
         "legacy_paths": ("works/no-references/",),
+        "home_label": "Heavily cited records with no references",
         "title": "Records with no references",
         "lede": "these {n} records list no references at all",
     },
 }
+
+
+def work_integrity_signals(work: dict) -> set[str]:
+    """Return configured integrity signals weakened by one exported work."""
+    return {
+        item["signal"]
+        for item in work.get("quality", {}).get("evidence", [])
+        if (item["signal"] in WORK_INTEGRITY_COHORTS
+            and item["direction"] == "weakens")
+    }
+
+
+def exported_integrity_counts(works_index: list[dict]) -> dict[str, int]:
+    """Count indexed cohort members from the exported work-detail evidence."""
+    indexed_ids = {work["id"] for work in works_index}
+    members = {signal: set() for signal in WORK_INTEGRITY_COHORTS}
+    work_dir = DATA / "works"
+    if work_dir.exists():
+        for shard in sorted(work_dir.glob("*.json")):
+            for work_id, work in json.loads(shard.read_text()).items():
+                if work_id in indexed_ids:
+                    for signal in work_integrity_signals(work):
+                        members[signal].add(work_id)
+    return {
+        signal: sum(work["id"] in signal_members for work in works_index)
+        for signal, signal_members in members.items()
+    }
 
 
 def render_integrity_cohort(signal: str, works_index: list, member_ids: set,
@@ -2506,10 +2562,8 @@ def main() -> int:
             w.setdefault("fields", legacy_fields)
             work_raw[wid] = w.get("raw")
             work_fields[wid] = w["fields"]
-            for item in w.get("quality", {}).get("evidence", []):
-                if (item["signal"] in integrity_members
-                        and item["direction"] == "weakens"):
-                    integrity_members[item["signal"]].add(wid)
+            for signal in work_integrity_signals(w):
+                integrity_members[signal].add(wid)
             for field, source in SOURCE_DISAGREEMENT_COHORTS:
                 cohort = (field, source)
                 observations = source_observations(w, field, source)
@@ -2553,9 +2607,14 @@ def main() -> int:
         )
         n += 1
 
+    home_corpus = dict(corpus)
+    home_corpus["_integrity_cohort_counts"] = {
+        signal: sum(work["id"] in members for work in works_index)
+        for signal, members in integrity_members.items()
+    }
     total += write(
         "index.html",
-        render_home(corpus, works_index, authors_index,
+        render_home(home_corpus, works_index, authors_index,
                     fields=fields_index, field_works=field_works),
     )
     total += write("works/index.html", render_browse("works", works_index, corpus))
