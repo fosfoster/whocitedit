@@ -46,6 +46,18 @@
     return String(value || "").toLowerCase();
   }
 
+  function rankMatches(rows, query, labelFor) {
+    return rows
+      .map(function (row, index) { return { row: row, index: index }; })
+      .sort(function (a, b) {
+        var aTier = normalized(labelFor(a.row)) === query ? 0 : 1;
+        var bTier = normalized(labelFor(b.row)) === query ? 0 : 1;
+        if (aTier !== bTier) return aTier - bTier;
+        return a.index - b.index;
+      })
+      .map(function (entry) { return entry.row; });
+  }
+
   function loadGlobal(index) {
     if (globalRows) return Promise.resolve(globalRows);
     if (globalLoad) return globalLoad;
@@ -123,6 +135,10 @@
       }).then(function (data) { rows = data; return rows; });
     }
 
+    function label(row) {
+      return row.title || row.name || row.id;
+    }
+
     function detail(row) {
       if (box.dataset.kind === "works") return (row.year || "") + " · " +
         (row.cited || 0).toLocaleString() + " cited";
@@ -158,9 +174,10 @@
         if (!query) return render([], "");
         load().then(function (all) {
           if (query !== normalized(box.value.trim())) return;
-          render(all.filter(function (row) {
-            return normalized(row.title || row.name || row.id).indexOf(query) >= 0;
-          }), query);
+          var matches = all.filter(function (row) {
+            return normalized(label(row)).indexOf(query) >= 0;
+          });
+          render(rankMatches(matches, query, label), query);
         }).catch(function () {
           if (query !== normalized(box.value.trim())) return;
           table.hidden = true;
