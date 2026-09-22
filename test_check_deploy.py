@@ -39,6 +39,11 @@ WORK_DOWNLOAD_CONTENTS = {
     "citation.bib": b"@article{W1, title={Fixture}}\n",
     "citation.ris": b"TY  - JOUR\nTI  - Fixture\nER  - \n",
 }
+WORK_DOWNLOAD_CONTENT_TYPES = {
+    "citation.bib": "application/x-bibtex",
+    "citation.ris": "application/x-research-info-systems",
+}
+HTML_CONTENT_TYPE = "text/html; charset=utf-8"
 
 
 def write_render(root):
@@ -59,6 +64,15 @@ def write_render(root):
     return pages, assets
 
 
+def fixture_headers():
+    """Per-route Content-Type headers matching what a correctly-deployed site would send."""
+    headers = {route: {"Content-Type": HTML_CONTENT_TYPE} for route in ("/", "/methodology/") + ROUTES}
+    for route in (route for route in ROUTES if route.startswith("/w/")):
+        for download_name, content_type in WORK_DOWNLOAD_CONTENT_TYPES.items():
+            headers[route + download_name] = {"Content-Type": content_type}
+    return headers
+
+
 def fixture_responses(pages, assets):
     responses = {
         "/robots.txt": b"User-agent: *\nAllow: /\n",
@@ -74,18 +88,19 @@ def fixture_responses(pages, assets):
 
 
 class FixtureTransport:
-    def __init__(self, responses):
+    def __init__(self, responses, headers=None):
         self.responses = responses
+        self.headers = headers if headers is not None else fixture_headers()
         self.calls = []
 
     def __call__(self, url):
         self.calls.append(url)
         route = url.removeprefix(BASE_URL)
-        return check_deploy.Response(200, self.responses[route])
+        return check_deploy.Response(200, self.responses[route], self.headers.get(route, {}))
 
 
-def run_case(site, assets, responses):
-    transport = FixtureTransport(responses)
+def run_case(site, assets, responses, headers=None):
+    transport = FixtureTransport(responses, headers)
     output = io.StringIO()
     code = check_deploy.check_deploy(BASE_URL, site, assets, transport, output)
     return code, output.getvalue(), transport.calls
@@ -226,7 +241,8 @@ def test_reader_critical_asset_hashes():
         def bad_status_transport(url):
             if url == BASE_URL + "/assets/style.css":
                 return check_deploy.Response(404, b"not found")
-            return check_deploy.Response(200, responses[url.removeprefix(BASE_URL)])
+            route = url.removeprefix(BASE_URL)
+            return check_deploy.Response(200, responses[route], fixture_headers().get(route, {}))
 
         output = io.StringIO()
         code = check_deploy.check_deploy(BASE_URL, site, assets, bad_status_transport, output)
@@ -278,7 +294,8 @@ def test_work_download_hashes():
         def unavailable_ris(url):
             if url == BASE_URL + "/w/W1/citation.ris":
                 return check_deploy.Response(404, b"not found")
-            return check_deploy.Response(200, responses[url.removeprefix(BASE_URL)])
+            route = url.removeprefix(BASE_URL)
+            return check_deploy.Response(200, responses[route], fixture_headers().get(route, {}))
 
         output = io.StringIO()
         code = check_deploy.check_deploy(BASE_URL, site, assets, unavailable_ris, output)
@@ -286,6 +303,54 @@ def test_work_download_hashes():
                     if line.startswith("Download SHA-256 /w/W1/citation.ris")), "")
         bad += check(code == 1 and "FAIL" in row and "remote download unavailable" in row,
                      "an unavailable remote work download did not fail without returning exit 2")
+    return 1 if bad else 0
+
+
+def test_content_type_mismatch():
+    """Byte-identical content served under the wrong (or absent) Content-Type must FAIL."""
+    bad = 0
+    html_routes = ("/", "/methodology/") + ROUTES
+    download_routes = tuple(f"/w/W1/{name}" for name in WORK_DOWNLOAD_CONTENTS)
+    wrong_header = {
+        "/": None,  # no Content-Type at all
+        "/methodology/": "text/plain",
+        "/w/W1/": "application/json",
+        "/a/A1/": "application/json",
+        "/i/I1/": "application/json",
+        "/t/T1/": "application/json",
+        "/w/W1/citation.bib": "application/json",
+        "/w/W1/citation.ris": "text/html",
+    }
+    with offline_fixture() as (site, _, assets, responses):
+        for route in html_routes + download_routes:
+            headers = {key: dict(value) for key, value in fixture_headers().items()}
+            wrong = wrong_header[route]
+            headers[route] = {} if wrong is None else {"Content-Type": wrong}
+            code, output, _ = run_case(site, assets, responses, headers)
+            lines = output.splitlines()
+            prefix = "HTML SHA-256 " if route in html_routes else "Download SHA-256 "
+            row = next((line for line in lines if line.startswith(prefix + route)), "")
+            expected_key = "html" if route in html_routes else route.rsplit("/", 1)[-1]
+            expected_types = check_deploy.EXPECTED_MEDIA_TYPES[expected_key]
+            expected_detail = check_deploy.media_type_detail(wrong, expected_types)
+            bad += check(
+                code == 1 and "FAIL" in row and expected_detail in row,
+                f"byte-identical content under a wrong Content-Type for {route} did not fail its row",
+            )
+            for other_route in html_routes:
+                if other_route == route:
+                    continue
+                other_row = next((line for line in lines
+                                  if line.startswith(f"HTML SHA-256 {other_route}")), "")
+                bad += check("PASS" in other_row,
+                             f"wrong Content-Type for {route} incorrectly failed {other_route}'s row")
+            for other_route in download_routes:
+                if other_route == route:
+                    continue
+                other_row = next((line for line in lines
+                                  if line.startswith(f"Download SHA-256 {other_route}")), "")
+                bad += check("PASS" in other_row,
+                             f"wrong Content-Type for {route} incorrectly failed {other_route}'s row")
     return 1 if bad else 0
 
 
@@ -350,7 +415,7 @@ def main():
             route = url.removeprefix(BASE_URL)
             if route == "/w/W1/citation.ris":
                 return check_deploy.Response(404, b"not found")
-            return check_deploy.Response(200, responses[route])
+            return check_deploy.Response(200, responses[route], fixture_headers().get(route, {}))
 
         output = io.StringIO()
         code = check_deploy.check_deploy(BASE_URL, site, assets, missing_ris, output)
@@ -417,6 +482,7 @@ def main():
     bad += test_sitemap_route_set_parity()
     bad += test_reader_critical_asset_hashes()
     bad += test_work_download_hashes()
+    bad += test_content_type_mismatch()
 
     print("test_check_deploy:", "FAILED" if bad else "ok")
     return 1 if bad else 0
