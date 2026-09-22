@@ -2494,7 +2494,11 @@ def main() -> int:
         )
         n += 1
 
-    total += write("index.html", render_home(corpus, works_index, authors_index, fields_index, field_works))
+    total += write(
+        "index.html",
+        render_home(corpus, works_index, authors_index,
+                    fields=fields_index, field_works=field_works),
+    )
     total += write("works/index.html", render_browse("works", works_index, corpus))
     total += write("fields/index.html", render_fields(fields_index))
     for field in fields_index:
