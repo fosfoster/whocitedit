@@ -62,6 +62,24 @@
     return globalLoad;
   }
 
+  function rankGlobalMatches(rows, query) {
+    var exact = [];
+    var substring = [];
+    rows.forEach(function (row) {
+      if (normalized(row.label) === query || normalized(row.id) === query) {
+        exact.push(row);
+        return;
+      }
+      var isSubstring = normalized(row.label).indexOf(query) >= 0 ||
+        normalized(row.id).indexOf(query) >= 0 ||
+        (row.aliases || []).some(function (alias) {
+          return normalized(alias).indexOf(query) >= 0;
+        });
+      if (isSubstring) substring.push(row);
+    });
+    return exact.concat(substring);
+  }
+
   function initGlobalSearch(form) {
     var box = form.querySelector("[data-search-input]");
     var results = form.querySelector(".search-results");
@@ -93,13 +111,7 @@
       if (!query) return;
       loadGlobal(form.dataset.index).then(function (rows) {
         if (query !== normalized(box.value.trim())) return;
-        render(rows.filter(function (row) {
-          return normalized(row.label).indexOf(query) >= 0 ||
-            normalized(row.id).indexOf(query) >= 0 ||
-            (row.aliases || []).some(function (alias) {
-              return normalized(alias).indexOf(query) >= 0;
-            });
-        }));
+        render(rankGlobalMatches(rows, query));
       }).catch(function () {
         if (query === normalized(box.value.trim())) {
           paragraph(results, "Search is unavailable. Please try again.");
