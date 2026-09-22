@@ -178,6 +178,15 @@ def main(argv: list[str]) -> int:
         harvest_crossref(crossref)
         print(f"== done: {crossref.spent} requests spent, {crossref.remaining} left today")
         return 0
+    if what == "semanticscholar":
+        semanticscholar = SemanticScholarClient()
+        print("== semanticscholar")
+        harvest_semanticscholar(semanticscholar)
+        print(
+            f"== done: {semanticscholar.spent} requests spent, "
+            f"{semanticscholar.remaining} left today"
+        )
+        return 0
 
     client = Client()
     if not client.mailto:

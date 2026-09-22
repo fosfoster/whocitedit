@@ -4,8 +4,8 @@ A static, crawlable graph of open scholarship: one page per paper, author,
 institution, and topic, each carrying the relevant ranked lists and graphs as
 SVG solved at build time rather than simulated in the browser.
 
-    harvest.py   OpenAlex + COCI + Crossref  ->  harvest/raw/    verbatim payloads, content-addressed
-    derive.py    raw       ->  whocitedit.db   normalized SQLite (gitignored)
+    harvest.py   OpenAlex + COCI + Crossref + Semantic Scholar  ->  harvest/raw/    verbatim payloads, content-addressed
+    derive.py    raw       ->  whocitedit.db   normalized SQLite and source-attributed citation edges (gitignored)
     export_json  db        ->  web/data/       committed, sharded JSON
     render.py    web/data  ->  web/site/       static work, author, institution and topic pages
     web/app/     React     ->  web/assets/islands.js   one committed bundle
@@ -68,11 +68,15 @@ To refresh the corpus (network, operator only):
 
 ```bash
 WHOCITEDIT_MAILTO=you@example.com python3 harvest.py all
+# `all` refreshes only OpenAlex works and authors.
 # A separate, bounded COCI pass stores outgoing DOI references in the same raw
 # provenance store. It is never run by the builder or CI.
 python3 harvest.py citations
 # A separate, bounded Crossref metadata pass. It is operator-only too.
 python3 harvest.py crossref
+# A separate, bounded Semantic Scholar reference pass. It is operator-only,
+# uses the network, and retains each source envelope and its manifest provenance.
+python3 harvest.py semanticscholar
 python3 derive.py && python3 export_json.py && python3 render.py
 ```
 
@@ -170,6 +174,15 @@ panel that also holds whichever of OpenAlex, Crossref and
 per source with that source's own payload hash and fetch time, verdicted
 `agree`/`disagree`/`unavailable`; a source that asserts nothing has no row and
 the OpenAlex record itself is never changed by a disagreement.
+
+[Semantic Scholar](https://www.semanticscholar.org/product/api) supplies a
+separate bounded operator-only network pass for outgoing DOI references:
+`python3 harvest.py semanticscholar`. Its client retains each response verbatim
+in the shared content-addressed raw store, with the source URL, payload hash,
+and fetch time recorded in the manifest. `derive.py` resolves the stored
+reference assertions against in-corpus DOI records and carries them into each
+citation edge's source-attributed `citation.sources` list; it does not alter
+the underlying OpenAlex record.
 
 **Venue and work type as parallel observations.** A work page shows the
 OpenAlex and Crossref venue and work-type assertions side by side, each
