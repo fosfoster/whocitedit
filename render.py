@@ -1016,6 +1016,11 @@ SOURCE_DISAGREEMENT_COHORTS = {
 }
 
 
+def href_for_cohort(cohort: tuple[str, str]) -> str:
+    """Return the site-root-relative href for one source-disagreement cohort."""
+    return "/" + SOURCE_DISAGREEMENT_COHORTS[cohort]["path"]
+
+
 def source_verdict_for(work: dict, field: str) -> str | None:
     """Return this field's exported source-comparison quality verdict, if any."""
     quality_data = work.get("quality")
