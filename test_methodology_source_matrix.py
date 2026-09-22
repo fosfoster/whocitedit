@@ -120,6 +120,11 @@ def write_fixture(data):
     (data / "works" / "fixture.json").write_text(json.dumps({row["id"]: work(row) for row in rows}))
 
 
+def cell_count(cell):
+    """The integer in a count cell, whose number may be wrapped in a cohort link."""
+    return int(re.sub(r"<[^>]+>", "", cell).replace(",", ""))
+
+
 def matrix_rows(html):
     panel = re.search(
         r'<h2>Source record field comparisons</h2>.*?<tbody>(.*?)</tbody>', html, re.S,
@@ -158,7 +163,7 @@ def main():
         }
         bad += check(rows is not None, "methodology has no source-field comparison table")
         actual = {
-            (source, field): tuple(int(value.replace(",", "")) for value in counts)
+            (source, field): tuple(cell_count(value) for value in counts)
             for source, field, *counts in (rows or [])
         }
         bad += check(len(rows or []) == len(render.SOURCE_DISAGREEMENT_COHORTS),
