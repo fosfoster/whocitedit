@@ -18,7 +18,7 @@ ROOT = Path(__file__).parent
 SITE = ROOT / "web" / "site"
 ASSETS = ROOT / "web" / "assets"
 READER_ASSETS = ("style.css", "app.js", "islands.js")
-WORK_DOWNLOADS = ("citation.bib", "citation.ris")
+WORK_DOWNLOADS = ("citation.bib", "citation.ris", "citation.csl.json")
 DETAIL_PREFIXES = ("w", "a", "i", "t")
 
 
