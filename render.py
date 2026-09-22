@@ -759,6 +759,8 @@ def svg_graph(g: dict, href: dict[str, str], caption: str,
         if not a or not b:
             continue
         cls = "edge inner" if edge.get("inner") else "edge"
+        if kind == "citation" and citation_edge_status(edge)[0] == "corroborated":
+            cls += " corroborated"
         w = 0.6 + min(edge.get("w", 1.0), 3.0) * 0.5 if "w" in edge else 1.0
         lines.append(
             f'<line class="{cls}" x1="{a[0]}" y1="{a[1]}" x2="{b[0]}" y2="{b[1]}" '
