@@ -34,6 +34,7 @@ import math
 import shutil
 import sys
 from pathlib import Path
+from typing import NamedTuple
 from urllib.parse import urlsplit
 
 import corpus_contract
@@ -650,14 +651,22 @@ def write(path: str, content: str) -> int:
 
 # -- graph ----------------------------------------------------------------
 
-def label_boxes(
-    g: dict, *, focus: str = ""
-) -> list[tuple[str, str, tuple[float, float, float, float]]]:
-    """Greedy label placement, largest node first, clamped to the viewBox.
 
-    Returns `(node_id, short_label, box)` for every label kept. `svg_graph` is
-    the only caller; pulled out as a public helper so the placement geometry
-    can be tested without re-parsing SVG.
+class LabelPlacement(NamedTuple):
+    node_id: str
+    text: str
+    x: float
+    y: float
+    anchor: str
+    box: tuple[float, float, float, float]
+
+
+def label_placements(g: dict, *, focus: str = "") -> list[LabelPlacement]:
+    """Final greedy label geometry, largest node first, inside the viewBox.
+
+    Each result owns the x, y and anchor emitted by `svg_graph`, plus the box
+    after that anchor is applied. Keeping those values together makes the
+    collision geometry the rendered geometry.
     """
     nodes_data = [
         {
@@ -681,7 +690,7 @@ def label_boxes(
         nodes_data,
         key=lambda n: (n["kind"] != "focus", -(n.get("cited") or n.get("works") or 0)),
     )
-    out: list[tuple[str, str, tuple[float, float, float, float]]] = []
+    out: list[LabelPlacement] = []
     for n in ordered:
         label = n["label"]
         short = label if len(label) <= 30 else label[:29] + "…"
@@ -690,15 +699,34 @@ def label_boxes(
         half = len(short) * 2.7
         for dy in (-r - 5, r + 11):
             top = min(max(n["y"] + dy - 9, top_lo), top_hi)
-            box = (n["x"] - half, top, n["x"] + half, top + box_h)
+            if n["x"] - half < inset:
+                anchor, x = "start", inset
+                left, right = x, x + 2 * half
+            elif n["x"] + half > g["width"] - inset:
+                anchor, x = "end", g["width"] - inset
+                left, right = x - 2 * half, x
+            else:
+                anchor, x = "middle", n["x"]
+                left, right = x - half, x + half
+            box = (left, top, right, top + box_h)
             if not any(
                 box[0] < q[2] and q[0] < box[2] and box[1] < q[3] and q[1] < box[3]
                 for q in placed
             ):
                 placed.append(box)
-                out.append((n["id"], short, box))
+                out.append(LabelPlacement(n["id"], short, x, top + 9, anchor, box))
                 break
     return out
+
+
+def label_boxes(
+    g: dict, *, focus: str = ""
+) -> list[tuple[str, str, tuple[float, float, float, float]]]:
+    """Backward-compatible box view of the final label placements."""
+    return [
+        (placement.node_id, placement.text, placement.box)
+        for placement in label_placements(g, focus=focus)
+    ]
 
 
 def svg_graph(g: dict, href: dict[str, str], caption: str,
@@ -744,9 +772,9 @@ def svg_graph(g: dict, href: dict[str, str], caption: str,
     # and the label can sit above or below the node. Every node keeps its full
     # title in a <title> element, so the information is still there on hover and
     # still in the markup a crawler reads.
-    labels: dict[str, tuple[float, str]] = {
-        node_id: (box[1] + 9, short)
-        for node_id, short, box in label_boxes(g, focus=focus)
+    labels = {
+        placement.node_id: placement
+        for placement in label_placements(g, focus=focus)
     }
 
     nodes = []
@@ -762,20 +790,10 @@ def svg_graph(g: dict, href: dict[str, str], caption: str,
         target = href.get(n["id"])
         text = ""
         if n["id"] in labels:
-            ly, short = labels[n["id"]]
-            # A centred label on a node near the edge runs outside the viewBox
-            # and is clipped mid-word. Anchor inward once the box would cross a
-            # boundary; the placement pass above already reserved the space.
-            half = len(short) * 2.7
-            if x - half < 4:
-                anchor, lx = "start", 4
-            elif x + half > g["width"] - 4:
-                anchor, lx = "end", g["width"] - 4
-            else:
-                anchor, lx = "middle", x
+            placement = labels[n["id"]]
             text = (
-                f'<text class="node-label" x="{lx}" y="{ly:.1f}" '
-                f'text-anchor="{anchor}">{e(short)}</text>'
+                f'<text class="node-label" x="{placement.x}" y="{placement.y}" '
+                f'text-anchor="{placement.anchor}">{e(placement.text)}</text>'
             )
         inner = f'<circle r="{r:.1f}" cx="{x}" cy="{y}"><title>{e(tip)}</title></circle>{text}'
         nodes.append(
