@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""Offline coverage for the BreadcrumbList JSON-LD on every listing page:
-the four browse kinds, the fields directory, and every field page (including
-the legacy no-fields-export release path)."""
+"""Offline coverage for BreadcrumbList JSON-LD on the field directory."""
 import json
 import re
 import shutil
@@ -87,7 +85,7 @@ def find_breadcrumbs(html: str):
     return breadcrumbs
 
 
-def check_page(site: Path, path: str, expected_trail: list) -> int:
+def check_page(site: Path, path: str, expected_trail: list | None) -> int:
     bad = 0
     page = site / path / "index.html"
     bad += check(page.exists(), f"missing /{path}/")
@@ -95,6 +93,8 @@ def check_page(site: Path, path: str, expected_trail: list) -> int:
         return bad
     html = page.read_text()
     breadcrumbs = find_breadcrumbs(html)
+    if expected_trail is None:
+        return bad + check(not breadcrumbs, f"/{path}/ unexpectedly carries a BreadcrumbList block")
     bad += check(len(breadcrumbs) == 1, f"/{path}/ does not carry exactly one BreadcrumbList block")
     if len(breadcrumbs) != 1:
         return bad
@@ -127,25 +127,17 @@ def main() -> int:
 
         site = render.SITE
         expected_pages = {
-            "works": [("Home", ""), ("Papers", "works/")],
-            "authors": [("Home", ""), ("Authors", "authors/")],
-            "institutions": [("Home", ""), ("Institutions", "institutions/")],
-            "topics": [("Home", ""), ("Topics", "topics/")],
             "fields": [("Home", ""), ("Fields", "fields/")],
         }
         for field in fields:
-            expected_pages[f'fields/{field["key"]}'] = [
-                ("Home", ""), ("Fields", "fields/"),
-                (field["name"], f'fields/{field["key"]}/'),
-            ]
+            expected_pages[f'fields/{field["key"]}'] = None
 
         for path, trail in expected_pages.items():
             bad += check_page(site, path, trail)
 
-        # The committed release has no fields-index export at all.  Its one
+        # The committed release has no fields-index export at all. Its one
         # legacy field is normalized from the top-level corpus definition and
-        # must still carry a three-item trail whose leaf URL matches its
-        # derived key.
+        # also uses listing metadata rather than a BreadcrumbList.
         legacy = tmp / "legacy-data"
         shutil.copytree(data, legacy)
         (legacy / "fields-index.json").unlink()
@@ -164,10 +156,7 @@ def main() -> int:
         render.DATA = legacy
         render.SITE = tmp / "legacy-site"
         bad += check(render.main() == 0, "legacy render without field exports failed")
-        bad += check_page(render.SITE, f"fields/{legacy_key}", [
-            ("Home", ""), ("Fields", "fields/"),
-            ("Legacy Fixture Field", f"fields/{legacy_key}/"),
-        ])
+        bad += check_page(render.SITE, f"fields/{legacy_key}", None)
     finally:
         render.DATA, render.SITE, render.ASSETS = saved
         shutil.rmtree(tmp, ignore_errors=True)

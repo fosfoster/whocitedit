@@ -76,8 +76,8 @@ def main() -> int:
 
     complete = render_institution(institution())
     head, blocks, orgs = metadata(complete)
-    bad += check(len(blocks) == 1, "institution head does not contain exactly one JSON-LD block")
-    org = orgs[0] if orgs else {}
+    bad += check(len(blocks) == 2, "institution head does not contain exactly two JSON-LD blocks")
+    org = next((value for value in orgs if value.get("@type") == "Organization"), {})
     bad += check(org.get("@context") == "https://schema.org"
                  and org.get("@type") == "Organization", "Organization JSON-LD is missing")
     bad += check(org.get("@id") == canonical and org.get("url") == canonical,
@@ -92,15 +92,15 @@ def main() -> int:
 
     no_ror = render_institution(institution(metadata={"ror": None, "country_code": "US", "type": "education"}))
     _, no_ror_blocks, no_ror_orgs = metadata(no_ror)
-    no_ror_org = no_ror_orgs[0] if no_ror_orgs else {}
-    bad += check(len(no_ror_blocks) == 1
+    no_ror_org = next((value for value in no_ror_orgs if value.get("@type") == "Organization"), {})
+    bad += check(len(no_ror_blocks) == 2
                  and no_ror_org.get("sameAs") == ["https://openalex.org/I123"],
                  "missing ROR changed or fabricated identity values")
 
     no_identity = render_institution(institution(
         metadata={"ror": None, "country_code": "US", "type": "education"}, openalex_url=None))
     _, _, no_identity_orgs = metadata(no_identity)
-    no_identity_org = no_identity_orgs[0] if no_identity_orgs else {}
+    no_identity_org = next((value for value in no_identity_orgs if value.get("@type") == "Organization"), {})
     bad += check("sameAs" not in no_identity_org,
                  "missing OpenAlex URL and ROR emitted an empty sameAs list")
 
@@ -108,8 +108,8 @@ def main() -> int:
 
     complete_topic = render_topic(topic())
     topic_head, topic_blocks, topic_terms = metadata(complete_topic)
-    bad += check(len(topic_blocks) == 1, "topic head does not contain exactly one JSON-LD block")
-    term = topic_terms[0] if topic_terms else {}
+    bad += check(len(topic_blocks) == 2, "topic head does not contain exactly two JSON-LD blocks")
+    term = next((value for value in topic_terms if value.get("@type") == "DefinedTerm"), {})
     bad += check(term.get("@context") == "https://schema.org"
                  and term.get("@type") == "DefinedTerm", "DefinedTerm JSON-LD is missing")
     bad += check(term.get("@id") == topic_canonical and term.get("url") == topic_canonical,
@@ -124,8 +124,8 @@ def main() -> int:
 
     no_openalex_topic = render_topic(topic(openalex_url=None))
     _, no_openalex_blocks, no_openalex_terms = metadata(no_openalex_topic)
-    no_openalex_term = no_openalex_terms[0] if no_openalex_terms else {}
-    bad += check(len(no_openalex_blocks) == 1 and "sameAs" not in no_openalex_term,
+    no_openalex_term = next((value for value in no_openalex_terms if value.get("@type") == "DefinedTerm"), {})
+    bad += check(len(no_openalex_blocks) == 2 and "sameAs" not in no_openalex_term,
                  "missing OpenAlex URL emitted an empty or fabricated sameAs list")
 
     print("test_entity_head_metadata:", "FAILED" if bad else "ok")

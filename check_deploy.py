@@ -18,6 +18,7 @@ ROOT = Path(__file__).parent
 SITE = ROOT / "web" / "site"
 ASSETS = ROOT / "web" / "assets"
 READER_ASSETS = ("style.css", "app.js", "islands.js")
+WORK_DOWNLOADS = ("citation.bib", "citation.ris")
 DETAIL_PREFIXES = ("w", "a", "i", "t")
 
 
@@ -144,6 +145,14 @@ def check_deploy(
             rows.append((f"HTML SHA-256 /{prefix}/ detail", "SKIP", "no local sitemap sample"))
         else:
             requested.append((route, route))
+    work_route = samples["w"]
+    if work_route is None:
+        for download_name in WORK_DOWNLOADS:
+            rows.append((f"Download SHA-256 /w/ {download_name}", "SKIP", "no local sitemap sample"))
+    else:
+        for download_name in WORK_DOWNLOADS:
+            download_route = work_route + download_name
+            requested.append((download_route, download_route))
     for asset_name in READER_ASSETS:
         asset_route = f"/assets/{asset_name}"
         requested.append((asset_route, asset_route))
@@ -212,6 +221,26 @@ def check_deploy(
             status = "PASS" if matches else "FAIL"
             rows.append((name, status, f"local {local_hash}; remote {remote_hash}"))
             failures |= status == "FAIL"
+
+    if work_route is not None:
+        for download_name in WORK_DOWNLOADS:
+            download_route = work_route + download_name
+            download_path = site / download_route.strip("/")
+            name = f"Download SHA-256 {download_route}"
+            remote_download = remote.get(download_route)
+            if remote_download is None or not 200 <= remote_download.status < 300:
+                rows.append((name, "FAIL", "remote download unavailable"))
+                failures = True
+            elif not download_path.exists():
+                rows.append((name, "FAIL", f"missing local {download_path.relative_to(site)}"))
+                failures = True
+            else:
+                matches, local_hash, remote_hash = sha256_comparison(
+                    download_path.read_bytes(), remote_download.body,
+                )
+                status = "PASS" if matches else "FAIL"
+                rows.append((name, status, f"local {local_hash}; remote {remote_hash}"))
+                failures |= status == "FAIL"
 
     for asset_name in READER_ASSETS:
         asset_route = f"/assets/{asset_name}"

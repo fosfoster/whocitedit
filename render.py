@@ -38,6 +38,7 @@ from urllib.parse import urlsplit
 
 import corpus_contract
 from opencitations import normalize_doi
+import quality
 
 ROOT = Path(__file__).parent
 DATA = ROOT / "web" / "data"
@@ -182,6 +183,62 @@ def breadcrumb_json_ld(trail: list[tuple[str, str]]) -> str:
     return json_ld(breadcrumb)
 
 
+def listing_metadata(canonical: str, name: str, entries: list[dict]) -> str:
+    """ItemList metadata for one of the public entity listings."""
+    kind = urlsplit(canonical).path.strip("/").split("/", 1)[0]
+    prefix, name_key = {
+        "works": ("w", "title"),
+        "authors": ("a", "name"),
+        "institutions": ("i", "name"),
+        "topics": ("t", "name"),
+        "fields": ("w", "title"),
+    }[kind]
+    return json_ld({
+        "@context": "https://schema.org",
+        "@type": "ItemList",
+        "@id": canonical,
+        "url": canonical,
+        "name": name,
+        "numberOfItems": len(entries),
+        "itemListElement": [
+            {
+                "@type": "ListItem",
+                "position": position,
+                "item": {
+                    "@id": canonical_url(f"{prefix}/{entry['id']}/"),
+                    "url": canonical_url(f"{prefix}/{entry['id']}/"),
+                    "name": entry[name_key],
+                },
+            }
+            for position, entry in enumerate(entries, start=1)
+        ],
+    })
+
+
+def work_citation_entries(w: dict) -> list[dict]:
+    """schema.org CreativeWork entries for this work's cited ('reference') neighbours.
+
+    Only 'reference' nodes are included; the focus node and 'citer' nodes are
+    excluded. Order follows the exported node order in w['graph']['nodes'],
+    deduped by id.
+    """
+    entries = []
+    seen = set()
+    for node in (w.get("graph") or {}).get("nodes", []):
+        if node.get("kind") != "reference":
+            continue
+        nid = node.get("id")
+        if not nid or nid in seen:
+            continue
+        seen.add(nid)
+        url = canonical_url(f"w/{nid}/")
+        entry = {"@type": "CreativeWork", "@id": url, "url": url}
+        if node.get("label"):
+            entry["name"] = node["label"]
+        entries.append(entry)
+    return entries
+
+
 def work_head_metadata(w: dict, canonical: str) -> str:
     """Citation and CreativeWork metadata using only the exported work fields."""
     citation = [
@@ -242,6 +299,9 @@ def work_head_metadata(w: dict, canonical: str) -> str:
                 "value": source["id"],
             }
         creative_work["isPartOf"] = source_work
+    citation_entries = work_citation_entries(w)
+    if citation_entries:
+        creative_work["citation"] = citation_entries
 
     return "\n".join(tag for tag in citation if tag) + "\n" + json_ld(creative_work)
 
@@ -289,6 +349,14 @@ def home_head_metadata(canonical: str) -> str:
         "name": SITE_NAME,
         "description": TAGLINE,
         "inLanguage": "en",
+        "potentialAction": {
+            "@type": "SearchAction",
+            "target": {
+                "@type": "EntryPoint",
+                "urlTemplate": f"{SITE_URL}/?q={{search_term_string}}",
+            },
+            "query-input": "required name=search_term_string",
+        },
     }
     return json_ld(website)
 
@@ -482,6 +550,7 @@ def search_index(works: list, authors: list, institutions: list, topics: list) -
             "id": row["id"],
             "label": row[label],
             **({"state": row[state]} if state else {}),
+            **({"aliases": [row["doi"]]} if kind == "work" and row.get("doi") else {}),
         }
         for kind, label, state, rows in (
             ("work", "title", "quality", works),
@@ -774,7 +843,10 @@ def evidence_html(evidence: list[dict], notes: dict) -> str:
     rows = []
     for item in evidence:
         signal, direction = item["signal"], item["direction"]
-        template = (notes.get(signal) or {}).get(direction)
+        templates = notes.get(signal) or {}
+        verdict = item.get("verdict")
+        template = templates.get(verdict) if isinstance(verdict, str) else None
+        template = template or templates.get(direction)
         value = item.get("value")
         if template:
             pct = f"{value:.0%}" if isinstance(value, float) else ""
@@ -889,11 +961,130 @@ def crossref_comparison_html(comparison: dict | None) -> str:
 SOURCE_LABELS = {"openalex": "OpenAlex", "crossref": "Crossref", "europepmc": "Europe PMC"}
 
 
+# Source disagreement cohorts remain separate because either source can
+# disagree with OpenAlex for the same field. A work whose verdict is
+# `both_disagree` belongs to both source cohorts for that field.
+SOURCE_DISAGREEMENT_COHORTS = {
+    ("title", "crossref"): {
+        "path": "works/title-disagreement/crossref/",
+        "source_label": "Crossref",
+        "field_label": "Title",
+    },
+    ("title", "europepmc"): {
+        "path": "works/title-disagreement/europepmc/",
+        "source_label": "Europe PMC",
+        "field_label": "Title",
+    },
+    ("venue", "crossref"): {
+        "path": "works/venue-disagreement/crossref/",
+        "source_label": "Crossref",
+        "field_label": "Venue",
+    },
+    ("venue", "europepmc"): {
+        "path": "works/venue-disagreement/europepmc/",
+        "source_label": "Europe PMC",
+        "field_label": "Venue",
+    },
+    ("date", "crossref"): {
+        "path": "works/date-disagreement/crossref/",
+        "source_label": "Crossref",
+        "field_label": "Publication date",
+    },
+    ("date", "europepmc"): {
+        "path": "works/date-disagreement/europepmc/",
+        "source_label": "Europe PMC",
+        "field_label": "Publication date",
+    },
+}
+
+
+def source_verdict_for(work: dict, field: str) -> str | None:
+    """Return this field's exported source-comparison quality verdict, if any."""
+    quality_data = work.get("quality")
+    if not isinstance(quality_data, dict):
+        return None
+    evidence = quality_data.get("evidence")
+    if not isinstance(evidence, list):
+        return None
+    for item in evidence:
+        if isinstance(item, dict) and item.get("signal") == f"{field}_source":
+            verdict = item.get("verdict")
+            return verdict if isinstance(verdict, str) else None
+    return None
+
+
+def disagrees_with(work: dict, field: str, source: str) -> bool:
+    """Whether `source` disagrees with OpenAlex for this field."""
+    verdict = source_verdict_for(work, field)
+    if source == "crossref":
+        return verdict in (quality.CROSSREF_DISAGREES, quality.BOTH_DISAGREE)
+    if source == "europepmc":
+        return verdict in (quality.EUROPEPMC_DISAGREES, quality.BOTH_DISAGREE)
+    return False
+
+
+def is_comparable(work: dict, field: str) -> bool:
+    """Whether a source-comparison verdict exists for the field."""
+    verdict = source_verdict_for(work, field)
+    return verdict is not None and verdict != quality.UNAVAILABLE
+
+
+def source_observations(work: dict, field: str, source: str) -> list[dict]:
+    """Return OpenAlex and every requested source assertion without merging them.
+
+    `source_comparison` keeps every Crossref and Europe PMC assertion. The
+    `record_comparison` fallback retains the one Europe PMC venue observation
+    exported by older payloads.
+    """
+    source_comparison = work.get("source_comparison")
+    source_field = (
+        source_comparison.get(field)
+        if isinstance(source_comparison, dict) else None
+    )
+    record_comparison = work.get("record_comparison")
+    record_field = (
+        record_comparison.get(field)
+        if isinstance(record_comparison, dict) else None
+    )
+
+    openalex = source_field.get("openalex") if isinstance(source_field, dict) else None
+    if not isinstance(openalex, dict) and isinstance(record_field, dict):
+        openalex = record_field.get("openalex")
+    observations = [openalex] if isinstance(openalex, dict) else []
+
+    asserted = source_field.get(source) if isinstance(source_field, dict) else None
+    if isinstance(asserted, list):
+        observations.extend(item for item in asserted if isinstance(item, dict))
+    elif isinstance(asserted, dict):
+        observations.append(asserted)
+
+    if not asserted and field == "venue" and source == "europepmc" and isinstance(record_field, dict):
+        europepmc = record_field.get("europepmc")
+        if isinstance(europepmc, dict):
+            observations.append(europepmc)
+    return observations
+
+
+def source_observations_are_comparable(observations: list[dict]) -> bool:
+    """Whether OpenAlex and the named source both supplied a field value."""
+    return (
+        len(observations) > 1
+        and bool(observations[0].get("value"))
+        and any(observation.get("value") for observation in observations[1:])
+    )
+
+
 def record_comparison_html(comparison: dict | None, payloads: dict) -> str:
     """Every present source's title, venue and date, each labelled, with the
     verdict beside them. A field block may lack a `crossref` (or `europepmc`)
     entry for a work that only one of those sources covers; `openalex` is
     always present.
+
+    Both the field block and the source entry inside it are looked up with
+    `.get`, because a payload exported before Europe PMC joined this panel
+    carries neither a `venue` block nor any `europepmc` entry, and the
+    committed `web/data` release is exactly that until an operator re-exports.
+    A field the export never wrote is skipped, not crashed on.
 
     The OpenAlex record above this panel is unchanged by anything here: a
     disagreement is shown, not resolved.
@@ -902,7 +1093,9 @@ def record_comparison_html(comparison: dict | None, payloads: dict) -> str:
         return ""
     sections = []
     for key, label in (("title", "Title"), ("venue", "Venue"), ("date", "Publication date")):
-        field = comparison[key]
+        field = comparison.get(key)
+        if not field:
+            continue
         status = field["status"]
         precision = field.get("precision")
         scope = f' <span class="faint">compared to the {e(precision)}</span>' if precision else ""
@@ -924,8 +1117,10 @@ def record_comparison_html(comparison: dict | None, payloads: dict) -> str:
     role = comparison["role"]
     return f"""
   <div class="panel">
-    <h2>Title and date across sources</h2>
-    <p class="meta">{e(role[:1].upper() + role[1:])}. The record above stays as OpenAlex published it.</p>
+    <h2>Title, venue and date across sources</h2>
+    <p class="meta">{e(role[:1].upper() + role[1:])}. Title, venue and date each carry one
+    row per source that asserts them, with that source's payload hash and fetch time;
+    the record above stays as OpenAlex published it.</p>
     <ul class="evidence">{"".join(sections)}</ul>
   </div>
 """
@@ -1083,6 +1278,37 @@ def citation_edge_evidence(g: dict) -> str:
 <p class="meta">Each row is directed from the citing work to the cited work. Source status remains readable without the interactive graph.</p>
 {contents}
 </section>"""
+
+
+def citation_assertion_rows(assertions: list[dict] | None, payloads: dict) -> str:
+    """One provenance row per exported citation-edge assertion: source label,
+    full payload hash, and fetch time.
+
+    `assertions` is an edge's exported `assertions` list (`work_graph` in
+    export_json.py), each entry carrying a `source` id and a `raw` sha256.
+    `payloads` is the export's sha256-keyed payload map, the same shape
+    `provenance_html` and the source-comparison renderers already take.
+
+    An unrecognised source id falls back to itself rather than crashing, same
+    as the methodology page's coverage table. The hash always goes through
+    `payload_source_link`, so a missing or invalid stored URL still shows the
+    hash without turning it into an unsafe anchor. No assertions means no row
+    -- this never fabricates provenance the export didn't carry.
+    """
+    if not assertions:
+        return ""
+    rows = []
+    for assertion in assertions:
+        source = assertion.get("source")
+        label = CITATION_SOURCE_NAMES.get(source, source)
+        sha = assertion.get("raw")
+        payload = payloads.get(sha) or {}
+        fetched = payload.get("fetched_at", "unknown")
+        rows.append(
+            f'<li><b>{e(label)}</b>: {payload_source_link(sha, payload.get("url"))} '
+            f'<span class="faint">fetched {e(fetched)}</span></li>'
+        )
+    return f'<ul class="evidence provenance-list">{"".join(rows)}</ul>'
 
 
 def bar_chart(pairs: list[tuple[int, int]], *, label: str, width: int = 980, height: int = 200) -> str:
@@ -1285,7 +1511,12 @@ def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
         ),
         body=body,
         path=f"w/{wid}/",
-        extra_head=work_head_metadata(w, canonical_url(f"w/{wid}/")),
+        extra_head=(
+            work_head_metadata(w, canonical_url(f"w/{wid}/"))
+            + breadcrumb_json_ld([
+                ("Home", ""), ("Papers", "works/"), (w["title"], f"w/{wid}/"),
+            ])
+        ),
         island=True,
     )
 
@@ -1413,7 +1644,12 @@ def render_author(a: dict, notes: dict, bands: dict, payloads: dict,
         ),
         body=body,
         path=f"a/{a['id']}/",
-        extra_head=author_head_metadata(a, canonical_url(f"a/{a['id']}/")),
+        extra_head=(
+            author_head_metadata(a, canonical_url(f"a/{a['id']}/"))
+            + breadcrumb_json_ld([
+                ("Home", ""), ("Authors", "authors/"), (a["name"], f"a/{a['id']}/"),
+            ])
+        ),
         island=True,
     )
 
@@ -1496,7 +1732,12 @@ def render_institution(i: dict, payloads: dict, author_ids: set[str],
         description=f'{i["name"]}: affiliated authors, works, and a precomputed collaboration graph.',
         body=body,
         path=f"i/{iid}/",
-        extra_head=institution_head_metadata(i, canonical_url(f"i/{iid}/")),
+        extra_head=(
+            institution_head_metadata(i, canonical_url(f"i/{iid}/"))
+            + breadcrumb_json_ld([
+                ("Home", ""), ("Institutions", "institutions/"), (i["name"], f"i/{iid}/"),
+            ])
+        ),
     )
 
 
@@ -1557,7 +1798,12 @@ def render_topic(t: dict, payloads: dict, work_ids: set[str], author_ids: set[st
         description=f'{t["name"]}: citation-ranked works and participating authors.',
         body=body,
         path=f"t/{t['id']}/",
-        extra_head=topic_head_metadata(t, canonical_url(f"t/{t['id']}/")),
+        extra_head=(
+            topic_head_metadata(t, canonical_url(f"t/{t['id']}/"))
+            + breadcrumb_json_ld([
+                ("Home", ""), ("Topics", "topics/"), (t["name"], f"t/{t['id']}/"),
+            ])
+        ),
     )
 
 
@@ -1673,6 +1919,7 @@ def render_home(corpus: dict, works: list, authors: list,
 
 
 def render_browse(kind: str, rows: list, corpus: dict) -> str:
+    displayed = rows[:400]
     if kind == "works":
         head = ('<tr><th>Paper</th><th>Record</th><th class="num">Year</th>'
                 '<th class="num">Cited</th><th class="num">In corpus</th></tr>')
@@ -1682,7 +1929,7 @@ def render_browse(kind: str, rows: list, corpus: dict) -> str:
             f'<td>{badge(r.get("quality"), hide="complete")}</td>' 
             f'<td class="num">{e(r["year"] or "")}</td><td class="num">{num(r["cited"])}</td>'
             f'<td class="num">{num(r["in_corpus_cited"])}</td></tr>'
-            for r in rows[:400]
+            for r in displayed
         )
         title, index = "Papers", "works-index.json"
     elif kind == "authors":
@@ -1692,7 +1939,7 @@ def render_browse(kind: str, rows: list, corpus: dict) -> str:
             f'<td><span class="badge {r["band"]}">{r["band"]}</span></td>'
             f'<td class="num">{num(r["works"])}</td><td class="num">{num(r["coauthors"])}</td>'
             f'<td class="num">{num(r["cited"])}</td></tr>'
-            for r in rows[:400]
+            for r in displayed
         )
         title, index = "Authors", "authors-index.json"
     elif kind == "institutions":
@@ -1702,7 +1949,7 @@ def render_browse(kind: str, rows: list, corpus: dict) -> str:
             f'<td class="num">{num(r.get("authors") or 0)}</td>'
             f'<td class="num">{num(r.get("works") or 0)}</td>'
             f'<td class="num">{num(r.get("graph") or 0)}</td></tr>'
-            for r in rows[:400]
+            for r in displayed
         )
         title, index = "Institutions", "institutions-index.json"
     else:
@@ -1711,7 +1958,7 @@ def render_browse(kind: str, rows: list, corpus: dict) -> str:
             f'<tr><td><a href="../t/{e(r["id"])}/">{e(r["name"])}</a></td>'
             f'<td class="num">{num(r.get("works") or 0)}</td>'
             f'<td class="num">{num(r.get("authors") or 0)}</td></tr>'
-            for r in rows[:400]
+            for r in displayed
         )
         title, index = "Topics", "topics-index.json"
 
@@ -1732,7 +1979,14 @@ def render_browse(kind: str, rows: list, corpus: dict) -> str:
         description=f"All {num(len(rows))} {title.lower()} in the {corpus_label(corpus)} corpus.",
         body=body,
         path=f"{kind}/",
-        extra_head=breadcrumb_json_ld([("Home", ""), (title, f"{kind}/")]),
+        extra_head=(
+            listing_metadata(canonical_url(f"{kind}/"), title, displayed)
+            + (
+                breadcrumb_json_ld([("Home", ""), (title, f"{kind}/")])
+                if kind in {"works", "authors"}
+                else ""
+            )
+        ),
     )
 
 
@@ -1787,9 +2041,9 @@ def render_field(field: dict, works: list, corpus: dict) -> str:
         description=description,
         body=body,
         path=f'fields/{field["key"]}/',
-        extra_head=breadcrumb_json_ld([
-            ("Home", ""), ("Fields", "fields/"), (field["name"], f'fields/{field["key"]}/'),
-        ]),
+        extra_head=listing_metadata(
+            canonical_url(f'fields/{field["key"]}/'), field["name"], works,
+        ),
     )
 
 
@@ -1835,6 +2089,120 @@ def render_cohort(kind: str, band: str, index_rows: list) -> str:
     return page(
         title=f"{title} — {SITE_NAME}",
         description=f"{description} The complete cohort is shown in exported index order.",
+        body=body,
+        path=path,
+    )
+
+
+def source_observation_cell(observations: list[dict]) -> str:
+    """Render parallel values without choosing or reconciling among them."""
+    if not observations:
+        return '<span class="faint">No observation exported.</span>'
+    rows = []
+    for observation in observations:
+        value = (
+            e(observation.get("value"))
+            if observation.get("value")
+            else '<span class="faint">not asserted</span>'
+        )
+        rows.append(
+            f'<li>{value} <span class="mono faint">sha256 {e(observation.get("raw"))}</span></li>'
+        )
+    return f'<ul class="evidence">{"".join(rows)}</ul>'
+
+
+def render_source_disagreement_cohort(field: str, source: str, works_index: list,
+                                       members: dict[str, list[dict]],
+                                       comparable_total: int) -> str:
+    """Render one uncapped source-disagreement cohort in works-index order."""
+    config = SOURCE_DISAGREEMENT_COHORTS[(field, source)]
+    rows = [work for work in works_index if work["id"] in members]
+    body_rows = "".join(
+        f'<tr><td><a href="../../../w/{e(work["id"])}/">{e(work["title"])}</a></td>'
+        f'<td>{source_observation_cell(members[work["id"]][:1])}</td>'
+        f'<td>{source_observation_cell(members[work["id"]][1:])}</td></tr>'
+        for work in rows
+    )
+    member_total = len(rows)
+    if member_total:
+        result = "Every matching record is shown below."
+    else:
+        result = "No works in this release match this disagreement cohort."
+    title = f'{config["field_label"]} disagreements asserted by {config["source_label"]}'
+    body = f"""
+<h1>{title}</h1>
+<p class="lede">{num(member_total)} of {num(comparable_total)} comparable works disagree between
+   OpenAlex and {config["source_label"]} on {config["field_label"].lower()}. {result}</p>
+<div class="scroll"><table>
+  <thead><tr><th>Paper</th><th>OpenAlex</th><th>{config["source_label"]}</th></tr></thead>
+  <tbody>{body_rows}</tbody>
+</table></div>
+"""
+    return page(
+        title=f"{title} — {SITE_NAME}",
+        description=(
+            f'{member_total} of {comparable_total} comparable works have a '
+            f'{config["field_label"].lower()} disagreement asserted by {config["source_label"]}.'
+        ),
+        body=body,
+        path=config["path"],
+    )
+
+
+# These cohorts are an honesty layer over the exported source record.  They use
+# the quality evidence already calculated upstream, then join that membership
+# back to works-index so their display fields and ordering stay export-driven.
+WORK_INTEGRITY_COHORTS = {
+    "title": {
+        "path": "works/missing-title/",
+        "title": "Records with no title",
+        "lede": "these {n} records list no title at all",
+    },
+    "authors": {
+        "path": "works/missing-authors/",
+        "title": "Records with no authors",
+        "lede": "these {n} records list no authors at all",
+    },
+    "doi_year": {
+        "path": "works/doi-year-disagreement/",
+        "legacy_paths": ("works/doi-year-mismatch/",),
+        "title": "Records whose DOI-asserted year disagrees",
+        "lede": "these {n} records carry a publication year that disagrees with the year asserted by their DOI",
+    },
+    "references": {
+        "path": "works/heavily-cited-no-references/",
+        "legacy_paths": ("works/no-references/",),
+        "title": "Records with no references",
+        "lede": "these {n} records list no references at all",
+    },
+}
+
+
+def render_integrity_cohort(signal: str, works_index: list, member_ids: set,
+                            path: str | None = None) -> str:
+    """Render every work whose quality.evidence weakens on one signal, uncapped."""
+    config = WORK_INTEGRITY_COHORTS[signal]
+    path = path or config["path"]
+    rows = [row for row in works_index if row["id"] in member_ids]
+    head = ('<tr><th>Paper</th><th>Record</th><th class="num">Year</th>'
+            '<th class="num">Cited</th><th class="num">In corpus</th></tr>')
+    body_rows = "".join(
+        f'<tr><td><a href="../../w/{e(row["id"])}/">{e(row["title"])}</a>'
+        f'<br><span class="meta faint">{e(", ".join(row["authors"]))}</span></td>'
+        f'<td>{badge(row.get("quality"), hide="complete")}</td>'
+        f'<td class="num">{e(row["year"] or "")}</td><td class="num">{num(row["cited"])}</td>'
+        f'<td class="num">{num(row["in_corpus_cited"])}</td></tr>'
+        for row in rows
+    )
+    lede = config["lede"].format(n=f"{len(rows):,}")
+    body = f"""
+<h1>{config["title"]}</h1>
+<p class="lede">{lede[0].upper() + lede[1:]}. Every matching record is shown below.</p>
+<div class="scroll"><table><thead>{head}</thead><tbody>{body_rows}</tbody></table></div>
+"""
+    return page(
+        title=f'{config["title"]} — {SITE_NAME}',
+        description=f'{config["title"]}. The complete cohort is shown in works-index order.',
         body=body,
         path=path,
     )
@@ -2066,6 +2434,13 @@ def main() -> int:
     topic_ids = set(topic_payloads)
     work_raw = {}
     work_fields = {}
+    integrity_members = {signal: set() for signal in WORK_INTEGRITY_COHORTS}
+    source_disagreement_members = {
+        cohort: {} for cohort in SOURCE_DISAGREEMENT_COHORTS
+    }
+    source_comparable_totals = {
+        cohort: 0 for cohort in SOURCE_DISAGREEMENT_COHORTS
+    }
 
     for shard in sorted((DATA / "works").glob("*.json")):
         for wid, w in json.loads(shard.read_text()).items():
@@ -2076,6 +2451,18 @@ def main() -> int:
             w.setdefault("fields", legacy_fields)
             work_raw[wid] = w.get("raw")
             work_fields[wid] = w["fields"]
+            for item in w.get("quality", {}).get("evidence", []):
+                if (item["signal"] in integrity_members
+                        and item["direction"] == "weakens"):
+                    integrity_members[item["signal"]].add(wid)
+            for field, source in SOURCE_DISAGREEMENT_COHORTS:
+                cohort = (field, source)
+                observations = source_observations(w, field, source)
+                if (is_comparable(w, field)
+                        and source_observations_are_comparable(observations)):
+                    source_comparable_totals[cohort] += 1
+                if disagrees_with(w, field, source):
+                    source_disagreement_members[cohort][wid] = observations
             total += write(
                 f"w/{wid}/index.html",
                 render_work(w, author_names, titles, payloads, quality_notes, topic_ids),
@@ -2119,10 +2506,30 @@ def main() -> int:
     total += write("authors/low-confidence/index.html", render_cohort("authors", "low", authors_index))
     total += write("works/partial/index.html", render_cohort("works", "partial", works_index))
     total += write("works/suspect/index.html", render_cohort("works", "suspect", works_index))
+    for signal, config in WORK_INTEGRITY_COHORTS.items():
+        for path in (config["path"], *config.get("legacy_paths", ())):
+            total += write(
+                f"{path}index.html",
+                render_integrity_cohort(signal, works_index, integrity_members[signal], path),
+            )
+    for (field, source), config in SOURCE_DISAGREEMENT_COHORTS.items():
+        total += write(
+            f'{config["path"]}index.html',
+            render_source_disagreement_cohort(
+                field,
+                source,
+                works_index,
+                source_disagreement_members[(field, source)],
+                source_comparable_totals[(field, source)],
+            ),
+        )
     total += write("institutions/index.html", render_browse("institutions", institutions_index, corpus))
     total += write("topics/index.html", render_browse("topics", topics_index, corpus))
     total += write("methodology/index.html", render_methodology(corpus))
-    n += 10 + len(fields_index)
+    n += 10 + len(fields_index) + len(SOURCE_DISAGREEMENT_COHORTS) + sum(
+        1 + len(config.get("legacy_paths", ()))
+        for config in WORK_INTEGRITY_COHORTS.values()
+    )
 
     # The browse pages fetch these at runtime for search; the rest of the corpus
     # data is already baked into the HTML and is not shipped.
@@ -2151,6 +2558,10 @@ def main() -> int:
         f"<url><loc>{SITE_URL}/{p}</loc></url>"
         for p in ["", "works/", "works/partial/", "works/suspect/", "fields/", "authors/",
                   "authors/low-confidence/", "institutions/", "topics/", "methodology/"]
+        + [path
+           for config in WORK_INTEGRITY_COHORTS.values()
+           for path in (config["path"], *config.get("legacy_paths", ()))]
+        + [config["path"] for config in SOURCE_DISAGREEMENT_COHORTS.values()]
         + [f"fields/{field['key']}/" for field in fields_index]
         + [f"w/{w['id']}/" for w in works_index]
         + [f"a/{a['id']}/" for a in authors_index]

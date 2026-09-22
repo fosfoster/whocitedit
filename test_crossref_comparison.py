@@ -340,7 +340,7 @@ def main() -> int:
             page = (site / "w" / wid / "index.html").read_text()
             doi, title, year, date = WORKS[wid]
             bad += check(f"<h1>{render.e(title)}</h1>" in page, f"{wid} page heading is not the OpenAlex title")
-            bad += check("Title and date across sources" in page, f"{wid} page has no comparison panel")
+            bad += check("Title, venue and date across sources" in page, f"{wid} page has no comparison panel")
             bad += check("<b>OpenAlex</b>:" in page and "<b>Crossref</b>:" in page,
                          f"{wid} page does not label both sources")
             bad += check(f'<span class="badge {title_status}">{title_status}</span> <span>Title</span>' in page,

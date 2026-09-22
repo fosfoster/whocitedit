@@ -178,10 +178,9 @@ CREATE TABLE IF NOT EXISTS work_topic (
 );
 
 -- One row per directed citation, both ends inside the corpus. `sources` is a
--- JSON array of the indexes that assert this edge, drawn from openalex,
--- opencitations, europepmc and crossref; an edge asserted by two independent
--- indexes is stronger evidence than one asserted by OpenAlex alone, and the
--- reader is shown which. The column is unconstrained TEXT with
+-- JSON array derived from `citation_assertion`: an edge asserted by two
+-- independent indexes is stronger evidence than one asserted by OpenAlex
+-- alone, and the reader is shown which. The column is unconstrained TEXT with
 -- DEFAULT '["openalex"]' — no CHECK constraint and no lookup table — so a new
 -- source name needs no migration, only a derive.py change that unions it in.
 CREATE TABLE IF NOT EXISTS citation (
@@ -191,6 +190,21 @@ CREATE TABLE IF NOT EXISTS citation (
   PRIMARY KEY (citing_id, cited_id)
 );
 CREATE INDEX IF NOT EXISTS citation_cited ON citation(cited_id);
+
+-- The stored payload that made each source's claim about a citation edge.
+-- There is one deterministic payload hash per source-edge pair; derive.py
+-- selects the lexicographically first when duplicate payloads make the same
+-- assertion. The composite foreign key makes an assertion impossible without
+-- its in-corpus citation edge.
+CREATE TABLE IF NOT EXISTS citation_assertion (
+  citing_id TEXT NOT NULL,
+  cited_id  TEXT NOT NULL,
+  source    TEXT NOT NULL,
+  raw_sha   TEXT NOT NULL REFERENCES raw_payload(sha256),
+  PRIMARY KEY (citing_id, cited_id, source),
+  FOREIGN KEY (citing_id, cited_id) REFERENCES citation(citing_id, cited_id)
+);
+CREATE INDEX IF NOT EXISTS citation_assertion_raw_sha ON citation_assertion(raw_sha);
 
 -- Undirected, stored once with a_id < b_id so a pair cannot be double counted.
 -- Weight is not a raw co-authorship count: see graph.py.
