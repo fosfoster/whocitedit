@@ -2034,7 +2034,26 @@ def render_fields(fields: list[dict]) -> str:
     )
 
 
-def render_field(field: dict, works: list, corpus: dict) -> str:
+def field_disagreement_counts(works: list, members: dict | None) -> list:
+    """This field's own count for each source-disagreement cohort.
+
+    ``members`` is main()'s cohort-key -> {work id: observations} map built
+    corpus-wide; the count here is the intersection with this field's own
+    ``works``, never a corpus-wide total. Every cohort in
+    ``SOURCE_DISAGREEMENT_COHORTS`` appears once, in its iteration order, even
+    when this field has zero members in it.
+    """
+    members = members or {}
+    work_ids = [work["id"] for work in works]
+    counts = []
+    for cohort, config in SOURCE_DISAGREEMENT_COHORTS.items():
+        cohort_members = members.get(cohort) or {}
+        count = sum(1 for wid in work_ids if wid in cohort_members)
+        counts.append({"key": cohort, "config": config, "count": count})
+    return counts
+
+
+def render_field(field: dict, works: list, corpus: dict, *, disagreement_members=None) -> str:
     """Render every exported member of one field, in global works-index order."""
     rows = "".join(
         f'<tr><td><a href="../../w/{e(work["id"])}/">{e(work["title"])}</a>'
@@ -2563,7 +2582,8 @@ def main() -> int:
     for field in fields_index:
         total += write(
             f"fields/{field['key']}/index.html",
-            render_field(field, field_works[field["key"]], corpus),
+            render_field(field, field_works[field["key"]], corpus,
+                         disagreement_members=source_disagreement_members),
         )
     total += write("authors/index.html", render_browse("authors", authors_index, corpus))
     total += write("authors/low-confidence/index.html", render_cohort("authors", "low", authors_index))
