@@ -215,6 +215,30 @@ def listing_metadata(canonical: str, name: str, entries: list[dict]) -> str:
     })
 
 
+def work_citation_entries(w: dict) -> list[dict]:
+    """schema.org CreativeWork entries for this work's cited ('reference') neighbours.
+
+    Only 'reference' nodes are included; the focus node and 'citer' nodes are
+    excluded. Order follows the exported node order in w['graph']['nodes'],
+    deduped by id.
+    """
+    entries = []
+    seen = set()
+    for node in (w.get("graph") or {}).get("nodes", []):
+        if node.get("kind") != "reference":
+            continue
+        nid = node.get("id")
+        if not nid or nid in seen:
+            continue
+        seen.add(nid)
+        url = canonical_url(f"w/{nid}/")
+        entry = {"@type": "CreativeWork", "@id": url, "url": url}
+        if node.get("label"):
+            entry["name"] = node["label"]
+        entries.append(entry)
+    return entries
+
+
 def work_head_metadata(w: dict, canonical: str) -> str:
     """Citation and CreativeWork metadata using only the exported work fields."""
     citation = [
@@ -275,6 +299,9 @@ def work_head_metadata(w: dict, canonical: str) -> str:
                 "value": source["id"],
             }
         creative_work["isPartOf"] = source_work
+    citation_entries = work_citation_entries(w)
+    if citation_entries:
+        creative_work["citation"] = citation_entries
 
     return "\n".join(tag for tag in citation if tag) + "\n" + json_ld(creative_work)
 
