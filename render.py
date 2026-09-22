@@ -1250,7 +1250,7 @@ def citation_edge_status(edge: dict) -> tuple[str, str]:
     return "legacy", "Legacy edge — source detail unavailable"
 
 
-def citation_edge_evidence(g: dict) -> str:
+def citation_edge_evidence(g: dict, payloads: dict) -> str:
     """Render one durable evidence row for every directed work-graph edge."""
     edges = g.get("edges") or []
     labels = {
@@ -1261,13 +1261,15 @@ def citation_edge_evidence(g: dict) -> str:
     for edge in edges:
         citing, cited = edge["s"], edge["t"]
         status, status_label = citation_edge_status(edge)
+        assertions = citation_assertion_rows(edge.get("assertions"), payloads)
         rows.append(
             f'<li data-citing="{e(citing)}" data-cited="{e(cited)}" '
             f'data-evidence-status="{status}">'
             f'<span class="edge-pair"><a href="../{e(citing)}/">{e(labels.get(citing, citing))}</a>'
             f'<span class="edge-direction" aria-label="cites">&rarr;</span>'
             f'<a href="../{e(cited)}/">{e(labels.get(cited, cited))}</a></span>'
-            f'<span class="edge-status {status}">{status_label}</span></li>'
+            f'<div class="edge-status-context"><span class="edge-status {status}">{status_label}</span>'
+            f'{assertions}</div></li>'
         )
     contents = (
         f'<ul class="edge-evidence-list">{"".join(rows)}</ul>'
@@ -1308,7 +1310,7 @@ def citation_assertion_rows(assertions: list[dict] | None, payloads: dict) -> st
             f'<li><b>{e(label)}</b>: {payload_source_link(sha, payload.get("url"))} '
             f'<span class="faint">fetched {e(fetched)}</span></li>'
         )
-    return f'<ul class="evidence provenance-list">{"".join(rows)}</ul>'
+    return f'<ul class="evidence provenance-list edge-assertion-list">{"".join(rows)}</ul>'
 
 
 def bar_chart(pairs: list[tuple[int, int]], *, label: str, width: int = 980, height: int = 200) -> str:
@@ -1472,7 +1474,7 @@ def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
     <span><i style="background:var(--citer)"></i>works citing it</span>
     <span class="faint">node size = global citations &middot; hover for the full title</span>
   </div>
-  {citation_edge_evidence(w["graph"])}
+  {citation_edge_evidence(w["graph"], payloads)}
   {neighbour_list(w, "reference", "What this paper cites, inside the corpus")}
   {neighbour_list(w, "citer", "What cites it, inside the corpus")}
 </div>
