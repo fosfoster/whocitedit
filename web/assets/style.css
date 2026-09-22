@@ -162,15 +162,18 @@ figure.graph figcaption { font-size: 12.5px; color: var(--ink-faint); margin-top
 .edge-evidence { margin-top: 24px; }
 .edge-evidence h2 { margin-bottom: 4px; }
 .edge-evidence-list { list-style: none; margin: 10px 0 0; padding: 0; border-top: 1px solid var(--rule); }
-.edge-evidence-list li { padding: 9px 0; border-bottom: 1px solid var(--rule); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: baseline; font-size: 13px; }
-.edge-pair { min-width: 0; }
-.edge-direction { padding: 0 7px; color: var(--ink-faint); }
-.edge-status { font-size: 12px; font-weight: 650; text-align: right; }
-.edge-status.corroborated { color: var(--high); }
-.edge-status.openalex-only { color: var(--medium); }
-.edge-status.opencitations-only { color: var(--low); }
-.edge-status.crossref-only { color: var(--low); }
-.edge-status.legacy { color: var(--ink-faint); }
+.edge-evidence-list > li { padding: 9px 0; border-bottom: 1px solid var(--rule); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: baseline; font-size: 13px; }
+.edge-evidence .edge-pair { min-width: 0; }
+.edge-evidence .edge-direction { padding: 0 7px; color: var(--ink-faint); }
+.edge-evidence .edge-status-context { min-width: 0; text-align: right; }
+.edge-evidence .edge-status { font-size: 12px; font-weight: 650; }
+.edge-evidence .edge-status.corroborated { color: var(--high); }
+.edge-evidence .edge-status.openalex-only { color: var(--medium); }
+.edge-evidence .edge-status.opencitations-only { color: var(--low); }
+.edge-evidence .edge-status.crossref-only { color: var(--low); }
+.edge-evidence .edge-status.legacy { color: var(--ink-faint); }
+.edge-evidence .edge-assertion-list { margin: 5px 0 0; }
+.edge-evidence .edge-assertion-list > li { display: block; padding: 3px 0; border: 0; font-size: 12px; overflow-wrap: anywhere; }
 
 .withheld { border-left: 3px solid var(--medium); padding: 8px 0 8px 12px; color: var(--ink-soft); font-size: 13.5px; margin: 0 0 14px; }
 
@@ -194,8 +197,8 @@ input[type=search]:focus-visible, a:focus-visible, button:focus-visible {
   header.site nav { flex: 1 1 250px; justify-content: flex-end; }
   header.site .field-nav { flex-basis: 100%; justify-content: flex-start; max-height: 4.8em; overflow: auto; }
   .global-search .search-results { position: static; margin-top: 5px; }
-  .edge-evidence-list li { grid-template-columns: 1fr; gap: 3px; }
-  .edge-status { text-align: left; }
+  .edge-evidence-list > li { grid-template-columns: 1fr; gap: 3px; }
+  .edge-evidence .edge-status-context { text-align: left; }
   .search-results a { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
   .search-results .badge { margin-left: 0; }
 }
