@@ -120,17 +120,22 @@ def write_fixture(data):
     (data / "works" / "fixture.json").write_text(json.dumps({row["id"]: work(row) for row in rows}))
 
 
+def strip_tags(cell):
+    return re.sub(r"<[^>]*>", "", cell)
+
+
 def matrix_rows(html):
     panel = re.search(
         r'<h2>Source record field comparisons</h2>.*?<tbody>(.*?)</tbody>', html, re.S,
     )
     if panel is None:
         return None
-    return re.findall(
+    rows = re.findall(
         r'<tr><td>(.*?)</td><td>(.*?)</td><td class="num">(.*?)</td>'
         r'<td class="num">(.*?)</td><td class="num">(.*?)</td></tr>',
         panel.group(1),
     )
+    return [tuple(strip_tags(cell) for cell in row) for row in rows]
 
 
 def main():
