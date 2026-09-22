@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Callable, TextIO
+from typing import Callable, Mapping, TextIO
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
@@ -21,14 +21,36 @@ READER_ASSETS = ("style.css", "app.js", "islands.js")
 WORK_DOWNLOADS = ("citation.bib", "citation.ris")
 DETAIL_PREFIXES = ("w", "a", "i", "t")
 
+# Expected media type(s) per checked route class. Several synonyms are accepted
+# for the citation downloads since different libraries register different
+# canonical types for the same format.
+EXPECTED_MEDIA_TYPES: dict[str, tuple[str, ...]] = {
+    "html": ("text/html",),
+    "citation.bib": ("application/x-bibtex", "text/x-bibtex"),
+    "citation.ris": ("application/x-research-info-systems", "application/research-info-systems"),
+}
+
 
 @dataclass
 class Response:
     status: int
     body: bytes
+    headers: Mapping[str, str] = field(default_factory=dict)
 
 
 Transport = Callable[[str], Response]
+
+
+def media_type(headers: Mapping[str, str]) -> str | None:
+    """Return the lowercased Content-Type media type with parameters stripped, or None."""
+    for key, value in headers.items():
+        if key.lower() == "content-type":
+            return value.split(";", 1)[0].strip().lower()
+    return None
+
+
+def media_type_detail(actual: str | None, expected: tuple[str, ...]) -> str:
+    return f"expected Content-Type {' or '.join(expected)}, got {actual or 'missing'}"
 
 
 def stdlib_transport(url: str) -> Response:
@@ -36,9 +58,9 @@ def stdlib_transport(url: str) -> Response:
     request = Request(url, headers={"User-Agent": "who-cited-it-deploy-check"})
     try:
         with urlopen(request, timeout=15) as response:
-            return Response(response.status, response.read())
+            return Response(response.status, response.read(), response.headers)
     except HTTPError as error:
-        return Response(error.code, error.read())
+        return Response(error.code, error.read(), error.headers)
 
 
 class TitleParser(HTMLParser):
@@ -202,8 +224,15 @@ def check_deploy(
             failures = True
         else:
             matches, local_hash, remote_hash = sha256_comparison(page.read_bytes(), response.body)
-            status = "PASS" if matches else "FAIL"
-            rows.append((name, status, f"local {local_hash}; remote {remote_hash}"))
+            actual_type = media_type(response.headers)
+            expected_type = EXPECTED_MEDIA_TYPES["html"]
+            if not matches:
+                status, detail = "FAIL", f"local {local_hash}; remote {remote_hash}"
+            elif actual_type not in expected_type:
+                status, detail = "FAIL", media_type_detail(actual_type, expected_type)
+            else:
+                status, detail = "PASS", f"local {local_hash}; remote {remote_hash}"
+            rows.append((name, status, detail))
             failures |= status == "FAIL"
 
     for route in [sample for sample in samples.values() if sample]:
@@ -218,8 +247,15 @@ def check_deploy(
             failures = True
         else:
             matches, local_hash, remote_hash = sha256_comparison(page.read_bytes(), response.body)
-            status = "PASS" if matches else "FAIL"
-            rows.append((name, status, f"local {local_hash}; remote {remote_hash}"))
+            actual_type = media_type(response.headers)
+            expected_type = EXPECTED_MEDIA_TYPES["html"]
+            if not matches:
+                status, detail = "FAIL", f"local {local_hash}; remote {remote_hash}"
+            elif actual_type not in expected_type:
+                status, detail = "FAIL", media_type_detail(actual_type, expected_type)
+            else:
+                status, detail = "PASS", f"local {local_hash}; remote {remote_hash}"
+            rows.append((name, status, detail))
             failures |= status == "FAIL"
 
     if work_route is not None:
@@ -238,8 +274,15 @@ def check_deploy(
                 matches, local_hash, remote_hash = sha256_comparison(
                     download_path.read_bytes(), remote_download.body,
                 )
-                status = "PASS" if matches else "FAIL"
-                rows.append((name, status, f"local {local_hash}; remote {remote_hash}"))
+                actual_type = media_type(remote_download.headers)
+                expected_type = EXPECTED_MEDIA_TYPES[download_name]
+                if not matches:
+                    status, detail = "FAIL", f"local {local_hash}; remote {remote_hash}"
+                elif actual_type not in expected_type:
+                    status, detail = "FAIL", media_type_detail(actual_type, expected_type)
+                else:
+                    status, detail = "PASS", f"local {local_hash}; remote {remote_hash}"
+                rows.append((name, status, detail))
                 failures |= status == "FAIL"
 
     for asset_name in READER_ASSETS:
