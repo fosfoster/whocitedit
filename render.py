@@ -1253,6 +1253,37 @@ def citation_edge_evidence(g: dict) -> str:
 </section>"""
 
 
+def citation_assertion_rows(assertions: list[dict] | None, payloads: dict) -> str:
+    """One provenance row per exported citation-edge assertion: source label,
+    full payload hash, and fetch time.
+
+    `assertions` is an edge's exported `assertions` list (`work_graph` in
+    export_json.py), each entry carrying a `source` id and a `raw` sha256.
+    `payloads` is the export's sha256-keyed payload map, the same shape
+    `provenance_html` and the source-comparison renderers already take.
+
+    An unrecognised source id falls back to itself rather than crashing, same
+    as the methodology page's coverage table. The hash always goes through
+    `payload_source_link`, so a missing or invalid stored URL still shows the
+    hash without turning it into an unsafe anchor. No assertions means no row
+    -- this never fabricates provenance the export didn't carry.
+    """
+    if not assertions:
+        return ""
+    rows = []
+    for assertion in assertions:
+        source = assertion.get("source")
+        label = CITATION_SOURCE_NAMES.get(source, source)
+        sha = assertion.get("raw")
+        payload = payloads.get(sha) or {}
+        fetched = payload.get("fetched_at", "unknown")
+        rows.append(
+            f'<li><b>{e(label)}</b>: {payload_source_link(sha, payload.get("url"))} '
+            f'<span class="faint">fetched {e(fetched)}</span></li>'
+        )
+    return f'<ul class="evidence provenance-list">{"".join(rows)}</ul>'
+
+
 def bar_chart(pairs: list[tuple[int, int]], *, label: str, width: int = 980, height: int = 200) -> str:
     """Works per publication year. One series, so no legend -- the heading names it.
 
