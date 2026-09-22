@@ -164,9 +164,12 @@ manifest rules. Its downstream metadata contract is bibliographic metadata and
 provenance only: it excludes publisher scraping, abstracts, and full text.
 `derive.py` joins each stored envelope to a corpus work by normalized DOI and
 keeps only its venue, type, plain-text title and a publication date at the
-precision Crossref gave. Work pages show those beside the OpenAlex values as
-`agree`/`disagree`/`unavailable` with both payload hashes; the OpenAlex record
-itself is never changed by a disagreement.
+precision Crossref gave. Work pages carry those in a title, venue and date
+panel that also holds whichever of OpenAlex, Crossref and
+[Europe PMC](https://europepmc.org/) asserts the same work, one labelled row
+per source with that source's own payload hash and fetch time, verdicted
+`agree`/`disagree`/`unavailable`; a source that asserts nothing has no row and
+the OpenAlex record itself is never changed by a disagreement.
 
 **Venue and work type as parallel observations.** A work page shows the
 OpenAlex and Crossref venue and work-type assertions side by side, each

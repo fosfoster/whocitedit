@@ -55,8 +55,8 @@ def main() -> int:
 
     complete = render_author(author())
     head, blocks, people = metadata(complete)
-    bad += check(len(blocks) == 1, "author head does not contain exactly one JSON-LD block")
-    person = people[0] if people else {}
+    bad += check(len(blocks) == 2, "author head does not contain exactly two JSON-LD blocks")
+    person = next((value for value in people if value.get("@type") == "Person"), {})
     bad += check(person.get("@context") == "https://schema.org"
                  and person.get("@type") == "Person", "Person JSON-LD is missing")
     bad += check(person.get("@id") == canonical and person.get("url") == canonical,
@@ -86,8 +86,8 @@ def main() -> int:
 
     missing = render_author(author(orcid=None))
     _, missing_blocks, missing_people = metadata(missing)
-    missing_person = missing_people[0] if missing_people else {}
-    bad += check(len(missing_blocks) == 1
+    missing_person = next((value for value in missing_people if value.get("@type") == "Person"), {})
+    bad += check(len(missing_blocks) == 2
                  and missing_person.get("sameAs") == ["https://openalex.org/A123"],
                  "missing ORCID changed or fabricated identity values")
     bad += check("identifier" not in missing_person and "orcid.org" not in missing,

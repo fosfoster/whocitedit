@@ -67,6 +67,8 @@ MAX_INNER_EDGES = 80
 # page across 3,000 pages is several megabytes of duplication.
 MAX_NODE_LABEL = 90
 
+_UNSET = object()
+
 
 
 def _display(path: Path) -> str:
@@ -142,11 +144,11 @@ def _source_comparison(
     Unlike `_crossref_comparison` above, which compares against only the
     earliest envelope, this keeps every observation so a reader can see all of
     them -- and a work's combined status disagrees if any one of them does,
-    even when another agrees. Venue and work type stay Crossref-only, two-way
-    (`agree`/`disagree`/`unavailable`) statuses, since Europe PMC's search
-    result carries no work-type assertion to compare and its venue field is
-    folded elsewhere; title and date carry the four-way verdict from
-    `quality.source_verdict`, which names which source, if either, disagrees.
+    even when another agrees. Work type stays Crossref-only because Europe PMC
+    carries no work-type assertion. Venue keeps its legacy Crossref status but
+    includes every Europe PMC venue observation; title and date carry the
+    four-way verdict from `quality.source_verdict`, which names which source,
+    if either, disagrees.
     """
     rows = conn.execute(
         "SELECT raw_sha, venue, venue_short, work_type, title, published FROM crossref_work_assertion "
@@ -154,7 +156,7 @@ def _source_comparison(
         (wid,),
     ).fetchall()
     europepmc_rows = conn.execute(
-        "SELECT raw_sha, title, publication_date FROM europepmc_work_assertion "
+        "SELECT raw_sha, title, venue, venue_short, publication_date FROM europepmc_work_assertion "
         "WHERE work_id = ? ORDER BY raw_sha",
         (wid,),
     ).fetchall()
@@ -162,6 +164,10 @@ def _source_comparison(
     venue_crossref = [
         {"source": "Crossref", "value": r["venue"] or r["venue_short"], "raw": r["raw_sha"]}
         for r in rows
+    ]
+    venue_europepmc = [
+        {"source": "Europe PMC", "value": r["venue"] or r["venue_short"], "raw": r["raw_sha"]}
+        for r in europepmc_rows
     ]
     type_crossref = [
         {"source": "Crossref", "value": r["work_type"], "raw": r["raw_sha"]}
@@ -207,6 +213,7 @@ def _source_comparison(
         "venue": {
             "openalex": {"source": "OpenAlex", "value": source_name, "raw": raw_sha},
             "crossref": venue_crossref,
+            "europepmc": venue_europepmc,
             "status": venue_status,
         },
         "work_type": {
@@ -230,9 +237,10 @@ def _source_comparison(
     }
 
 
-# Crossref's title/date comparison role on a work page. It is declared apart
-# from `citation_sources`, which is keyed by machine identifier for the same
-# indexes and also carries Crossref's citation-edge role (see below).
+# Crossref's and Europe PMC's title/venue/date comparison role on a work page.
+# Declared apart from `citation_sources`, which is keyed by machine identifier
+# for the same indexes and also carries Crossref's and Europe PMC's
+# citation-edge roles (see below).
 METADATA_SOURCES = {
     "openalex": {
         "id": "openalex",
@@ -248,43 +256,94 @@ METADATA_SOURCES = {
         "license": "bibliographic metadata only; no abstracts or full text",
         "role": "title and publication-date comparison against the OpenAlex work record",
     },
+    "europepmc": {
+        "id": "europepmc",
+        "name": "Europe PMC",
+        "url": "https://europepmc.org",
+        "license": "CC BY (REST API, per-record licence as published)",
+        "role": "title, venue and publication-date comparison against the OpenAlex work record",
+    },
 }
 
 
 def _record_comparison(conn, row) -> dict | None:
-    """OpenAlex's title and date beside Crossref's, each named by its source and payload.
+    """OpenAlex's title, venue and date beside whichever of Crossref and Europe
+    PMC also assert them, each named by its source and payload.
 
     Additive only: the OpenAlex values here are the same ones the work carries
-    at the top level, restated so the reader can see both assertions and the
-    bytes each came from. Same earliest-by-raw_sha choice as the venue/type
-    comparison so the two panels describe one envelope.
+    at the top level, restated so the reader can see every assertion and the
+    bytes each came from. Same earliest-by-raw_sha choice per source as the
+    venue/type comparison, so each panel describes one envelope even when a
+    work carries several. A work with neither a Crossref nor a Europe PMC
+    assertion has nothing to compare and exports no block at all.
     """
-    assertion = conn.execute(
-        "SELECT raw_sha, title, published FROM crossref_work_assertion "
+    wid = row["id"]
+    crossref = conn.execute(
+        "SELECT raw_sha, title, venue, venue_short, published FROM crossref_work_assertion "
         "WHERE work_id = ? ORDER BY raw_sha LIMIT 1",
-        (row["id"],),
+        (wid,),
     ).fetchone()
-    if assertion is None:
+    europepmc = conn.execute(
+        "SELECT raw_sha, title, venue, venue_short, publication_date FROM europepmc_work_assertion "
+        "WHERE work_id = ? ORDER BY raw_sha LIMIT 1",
+        (wid,),
+    ).fetchone()
+    if crossref is None and europepmc is None:
         return None
+
     openalex_date = row["publication_date"] or (str(row["year"]) if row["year"] else None)
-    date_status, precision = derive.date_comparison(openalex_date, assertion["published"])
+
+    def source_entry(source: str, value, raw: str) -> dict:
+        return {"source": source, "value": value, "raw": raw}
+
+    title = {"openalex": source_entry("openalex", row["title"], row["raw_sha"])}
+    venue = {"openalex": source_entry("openalex", row["source_name"], row["raw_sha"])}
+    date = {"openalex": source_entry("openalex", openalex_date, row["raw_sha"])}
+
+    titles = [row["title"]]
+    venues = [(row["source_name"],)]
+    dates = [openalex_date]
+
+    present_sources = []
+    if crossref is not None:
+        present_sources.append("crossref")
+        title["crossref"] = source_entry("crossref", crossref["title"], crossref["raw_sha"])
+        venue["crossref"] = source_entry(
+            "crossref", crossref["venue"] or crossref["venue_short"], crossref["raw_sha"]
+        )
+        date["crossref"] = source_entry("crossref", crossref["published"], crossref["raw_sha"])
+        titles.append(crossref["title"])
+        venues.append((crossref["venue"], crossref["venue_short"]))
+        dates.append(crossref["published"])
+
+    if europepmc is not None:
+        present_sources.append("europepmc")
+        title["europepmc"] = source_entry("europepmc", europepmc["title"], europepmc["raw_sha"])
+        venue["europepmc"] = source_entry(
+            "europepmc", europepmc["venue"] or europepmc["venue_short"], europepmc["raw_sha"]
+        )
+        date["europepmc"] = source_entry("europepmc", europepmc["publication_date"], europepmc["raw_sha"])
+        titles.append(europepmc["title"])
+        venues.append((europepmc["venue"], europepmc["venue_short"]))
+        dates.append(europepmc["publication_date"])
+
+    title["status"] = derive.title_comparison_status_n(titles)
+    venue["status"] = derive.venue_comparison_status_n(venues)
+    date_status, precision = derive.date_comparison_n(dates)
+    date["status"], date["precision"] = date_status, precision
+
+    names = " and ".join(METADATA_SOURCES[s]["name"] for s in present_sources)
+    role = f"{names} title/venue/date comparison against the OpenAlex work record"
+
     return {
-        "role": METADATA_SOURCES["crossref"]["role"],
-        "title": {
-            "status": derive.title_comparison_status(row["title"], assertion["title"]),
-            "openalex": {"source": "openalex", "value": row["title"], "raw": row["raw_sha"]},
-            "crossref": {"source": "crossref", "value": assertion["title"], "raw": assertion["raw_sha"]},
-        },
-        "date": {
-            "status": date_status,
-            "precision": precision,
-            "openalex": {"source": "openalex", "value": openalex_date, "raw": row["raw_sha"]},
-            "crossref": {"source": "crossref", "value": assertion["published"], "raw": assertion["raw_sha"]},
-        },
+        "role": role,
+        "title": title,
+        "venue": venue,
+        "date": date,
     }
 
 
-def work_payload(conn, row, neighbourhood) -> dict:
+def work_payload(conn, row, neighbourhood, citation_count_outlier=_UNSET) -> dict:
     wid = row["id"]
     fields = [
         r["field_key"]
@@ -316,6 +375,8 @@ def work_payload(conn, row, neighbourhood) -> dict:
             (wid,),
         )
     ]
+    if citation_count_outlier is _UNSET:
+        citation_count_outlier = derive.citation_count_outlier(conn, row)
     return {
         "id": wid,
         "title": row["title"],
@@ -338,6 +399,7 @@ def work_payload(conn, row, neighbourhood) -> dict:
         },
         "cited_by_count": row["cited_by_count"],
         "referenced_count": row["referenced_count"],
+        "citation_count_outlier": citation_count_outlier,
         "quality": {
             "band": row["quality"] or quality.COMPLETE,
             "sentence": quality.band_sentence(row["quality"] or quality.COMPLETE),
@@ -369,8 +431,11 @@ def work_graph(conn, wid: str, titles: dict[str, dict]) -> dict:
     keep_citers = citers[: budget - len(keep_refs)]
 
     node_ids = [wid] + keep_refs + keep_citers
-    edge_sources = {
-        (r["citing_id"], r["cited_id"]): json.loads(r["sources"])
+    edge_evidence = {
+        (r["citing_id"], r["cited_id"]): {
+            "sources": json.loads(r["sources"]),
+            "assertions": [],
+        }
         for r in conn.execute(
             "SELECT citing_id, cited_id, sources FROM citation "
             "WHERE citing_id IN ({marks}) AND cited_id IN ({marks})".format(
@@ -379,9 +444,20 @@ def work_graph(conn, wid: str, titles: dict[str, dict]) -> dict:
             node_ids + node_ids,
         )
     }
+    for row in conn.execute(
+        "SELECT citing_id, cited_id, source, raw_sha FROM citation_assertion "
+        "WHERE citing_id IN ({marks}) AND cited_id IN ({marks}) "
+        "ORDER BY citing_id, cited_id, source".format(
+            marks=",".join("?" for _ in node_ids),
+        ),
+        node_ids + node_ids,
+    ):
+        edge_evidence[(row["citing_id"], row["cited_id"])]["assertions"].append(
+            {"source": row["source"], "raw": row["raw_sha"]}
+        )
     edges = (
-        [(c, wid, 1.0, edge_sources[(c, wid)]) for c in keep_citers]
-        + [(wid, r, 1.0, edge_sources[(wid, r)]) for r in keep_refs]
+        [(c, wid, 1.0, edge_evidence[(c, wid)]) for c in keep_citers]
+        + [(wid, r, 1.0, edge_evidence[(wid, r)]) for r in keep_refs]
     )
 
     # EDGES AMONG THE NEIGHBOURS, not only to the focus. Without these the graph
@@ -393,12 +469,12 @@ def work_graph(conn, wid: str, titles: dict[str, dict]) -> dict:
     if inner:
         marks = ",".join("?" * len(inner))
         rows = conn.execute(
-            f"SELECT citing_id, cited_id, sources FROM citation "
+            f"SELECT citing_id, cited_id FROM citation "
             f"WHERE citing_id IN ({marks}) AND cited_id IN ({marks})",
             list(inner) + list(inner),
         )
         edges += [
-            (r["citing_id"], r["cited_id"], 0.6, json.loads(r["sources"]))
+            (r["citing_id"], r["cited_id"], 0.6, edge_evidence[(r["citing_id"], r["cited_id"])])
             for r in rows
         ]
 
@@ -426,9 +502,10 @@ def work_graph(conn, wid: str, titles: dict[str, dict]) -> dict:
         + [node(n, "reference") for n in keep_refs]
         + [node(n, "citer") for n in keep_citers],
         "edges": [
-            {"s": s, "t": t, "sources": sources,
+            {"s": s, "t": t, "sources": evidence["sources"],
+             "assertions": evidence["assertions"],
              **({"inner": True} if wid not in (s, t) else {})}
-            for s, t, _, sources in edges
+            for s, t, _, evidence in edges
         ],
         "shown": len(node_ids) - 1,
         "available": total,
@@ -785,13 +862,16 @@ def main() -> int:
         r["cited_id"]: r["n"]
         for r in conn.execute("SELECT cited_id, COUNT(*) n FROM citation GROUP BY cited_id")
     }
+    citation_outliers = derive.citation_count_outliers(conn)
 
     # -- works -----------------------------------------------------------
     work_shards: dict[str, dict] = {}
     work_index = []
     for row in conn.execute("SELECT * FROM work ORDER BY cited_by_count DESC, id"):
         wid = row["id"]
-        payload = work_payload(conn, row, work_graph(conn, wid, titles))
+        payload = work_payload(
+            conn, row, work_graph(conn, wid, titles), citation_outliers.get(wid)
+        )
         payload["in_corpus_cited_by"] = in_cites.get(wid, 0)
         work_shards.setdefault(shard(wid), {})[wid] = payload
         work_index.append(
@@ -806,6 +886,7 @@ def main() -> int:
                 "oa": bool(row["is_oa"]),
                 "quality": row["quality"] or quality.COMPLETE,
                 "fields": payload["fields"],
+                **({"doi": row["doi"]} if row["doi"] else {}),
             }
         )
     total_bytes = 0
@@ -996,6 +1077,13 @@ def main() -> int:
             "url": "https://arxiv.org",
             "license": "bibliographic metadata only; no abstracts or full text",
             "role": "citation edges asserted by the author-supplied reference list",
+        },
+        "semanticscholar": {
+            "id": "semanticscholar",
+            "name": "Semantic Scholar",
+            "url": "https://www.semanticscholar.org",
+            "license": "bibliographic metadata only; no abstracts or full text",
+            "role": "citation edges asserted by the Semantic Scholar Academic Graph API",
         },
     }
     by_index_count: dict[int, int] = {}
