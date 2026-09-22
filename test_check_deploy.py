@@ -39,6 +39,13 @@ WORK_DOWNLOAD_CONTENTS = {
     "citation.bib": b"@article{W1, title={Fixture}}\n",
     "citation.ris": b"TY  - JOUR\nTI  - Fixture\nER  - \n",
 }
+READER_DATA_CONTENTS = {
+    "search-index.json": b'{"fixture": "search-index"}\n',
+    "works-index.json": b'{"fixture": "works-index"}\n',
+    "authors-index.json": b'{"fixture": "authors-index"}\n',
+    "institutions-index.json": b'{"fixture": "institutions-index"}\n',
+    "topics-index.json": b'{"fixture": "topics-index"}\n',
+}
 
 
 def write_render(root):
@@ -52,6 +59,10 @@ def write_render(root):
         for download_name, content in WORK_DOWNLOAD_CONTENTS.items():
             (root / route.strip("/") / download_name).write_bytes(content)
     (root / "sitemap.xml").write_bytes(sitemap(("/", "/methodology/") + ROUTES))
+    data = root / "data"
+    data.mkdir(parents=True, exist_ok=True)
+    for data_name, content in READER_DATA_CONTENTS.items():
+        (data / data_name).write_bytes(content)
     assets = root.parent / "assets"
     assets.mkdir(parents=True, exist_ok=True)
     for asset_name, content in READER_ASSET_CONTENTS.items():
@@ -59,13 +70,15 @@ def write_render(root):
     return pages, assets
 
 
-def fixture_responses(pages, assets):
+def fixture_responses(pages, assets, site):
     responses = {
         "/robots.txt": b"User-agent: *\nAllow: /\n",
         "/sitemap.xml": sitemap(("/", "/methodology/") + ROUTES),
     }
     for asset_name in READER_ASSET_CONTENTS:
         responses[f"/assets/{asset_name}"] = (assets / asset_name).read_bytes()
+    for data_name in READER_DATA_CONTENTS:
+        responses[f"/data/{data_name}"] = (site / "data" / data_name).read_bytes()
     responses.update({route: html(page_title) for route, page_title in pages.items()})
     for route in (route for route in ROUTES if route.startswith("/w/")):
         for download_name, content in WORK_DOWNLOAD_CONTENTS.items():
@@ -103,7 +116,7 @@ def offline_fixture():
     try:
         site = tmp / "site"
         pages, assets = write_render(site)
-        responses = fixture_responses(pages, assets)
+        responses = fixture_responses(pages, assets, site)
         yield site, pages, assets, responses
     finally:
         check_deploy.urlopen = saved_urlopen
@@ -289,6 +302,27 @@ def test_work_download_hashes():
     return 1 if bad else 0
 
 
+def test_reader_data_index_parity():
+    bad = 0
+    with offline_fixture() as (site, _, assets, responses):
+        code, output, calls = run_case(site, assets, responses)
+        bad += check(code == 0, "matching data indexes did not return 0")
+        for data_name in check_deploy.READER_DATA:
+            route = f"/data/{data_name}"
+            row = next((line for line in output.splitlines()
+                        if line.startswith(f"Data SHA-256 {route}")), "")
+            content_hash = hashlib.sha256(responses[route]).hexdigest()
+            bad += check(
+                "PASS" in row and f"local {content_hash}; remote {content_hash}" in row,
+                f"matching deployment did not report matching data hashes for {data_name}",
+            )
+            bad += check(
+                calls.count(BASE_URL + route) == 1,
+                f"matching deployment did not request {route} exactly once",
+            )
+    return 1 if bad else 0
+
+
 def main():
     bad = 0
     with offline_fixture() as (site, pages, assets, responses):
@@ -296,12 +330,14 @@ def main():
             "/robots.txt", "/sitemap.xml", "/", "/methodology/", *ROUTES,
             "/w/W1/citation.bib", "/w/W1/citation.ris",
             "/assets/style.css", "/assets/app.js", "/assets/islands.js",
+            "/data/search-index.json", "/data/works-index.json", "/data/authors-index.json",
+            "/data/institutions-index.json", "/data/topics-index.json",
         )}
 
         code, output, calls = run_case(site, assets, responses)
         bad += check(code == 0, "matching deployment did not return 0")
-        bad += check(set(calls) == expected_urls and len(calls) == 13,
-                     "matching deployment did not request exactly the thirteen resources")
+        bad += check(set(calls) == expected_urls and len(calls) == 18,
+                     "matching deployment did not request exactly the eighteen resources")
         bad += check("Deployment parity" in output and "PASS" in output,
                      "matching deployment did not print a PASS table")
         for download_name in check_deploy.WORK_DOWNLOADS:
@@ -374,7 +410,7 @@ def main():
 
         output = io.StringIO()
         code = check_deploy.check_deploy(BASE_URL, site, assets, unreachable, output)
-        bad += check(code == 2 and len(calls) == 13 and "Deployment parity" in output.getvalue(),
+        bad += check(code == 2 and len(calls) == 18 and "Deployment parity" in output.getvalue(),
                      "unreachable host did not return 2 with a complete table")
 
         missing = site.parent / "missing-site"
@@ -382,7 +418,7 @@ def main():
         shutil.rmtree(missing / "i")
         missing_routes = ("/", "/methodology/", "/w/W1/", "/a/A1/", "/t/T1/")
         (missing / "sitemap.xml").write_bytes(sitemap(missing_routes))
-        missing_responses = fixture_responses(pages, assets)
+        missing_responses = fixture_responses(pages, assets, missing)
         missing_responses["/sitemap.xml"] = sitemap(missing_routes)
         code, output, calls = run_case(missing, assets, missing_responses)
         bad += check(code == 0 and "HTML SHA-256 /i/ detail" in output and "SKIP" in output,
@@ -395,7 +431,7 @@ def main():
         shutil.rmtree(no_work / "w")
         no_work_routes = ("/", "/methodology/", "/a/A1/", "/i/I1/", "/t/T1/")
         (no_work / "sitemap.xml").write_bytes(sitemap(no_work_routes))
-        no_work_responses = fixture_responses(pages, assets)
+        no_work_responses = fixture_responses(pages, assets, no_work)
         no_work_responses["/sitemap.xml"] = sitemap(no_work_routes)
         code, output, calls = run_case(no_work, assets, no_work_responses)
         download_skips = [
@@ -417,6 +453,7 @@ def main():
     bad += test_sitemap_route_set_parity()
     bad += test_reader_critical_asset_hashes()
     bad += test_work_download_hashes()
+    bad += test_reader_data_index_parity()
 
     print("test_check_deploy:", "FAILED" if bad else "ok")
     return 1 if bad else 0

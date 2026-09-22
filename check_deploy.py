@@ -18,6 +18,13 @@ ROOT = Path(__file__).parent
 SITE = ROOT / "web" / "site"
 ASSETS = ROOT / "web" / "assets"
 READER_ASSETS = ("style.css", "app.js", "islands.js")
+READER_DATA = (
+    "search-index.json",
+    "works-index.json",
+    "authors-index.json",
+    "institutions-index.json",
+    "topics-index.json",
+)
 WORK_DOWNLOADS = ("citation.bib", "citation.ris")
 DETAIL_PREFIXES = ("w", "a", "i", "t")
 
@@ -156,6 +163,9 @@ def check_deploy(
     for asset_name in READER_ASSETS:
         asset_route = f"/assets/{asset_name}"
         requested.append((asset_route, asset_route))
+    for data_name in READER_DATA:
+        data_route = f"/data/{data_name}"
+        requested.append((data_route, data_route))
 
     remote: dict[str, Response] = {}
     for label, route in requested:
@@ -255,6 +265,23 @@ def check_deploy(
             failures = True
         else:
             matches, local_hash, remote_hash = sha256_comparison(asset_path.read_bytes(), remote_asset.body)
+            status = "PASS" if matches else "FAIL"
+            rows.append((name, status, f"local {local_hash}; remote {remote_hash}"))
+            failures |= status == "FAIL"
+
+    for data_name in READER_DATA:
+        data_route = f"/data/{data_name}"
+        data_path = site / "data" / data_name
+        name = f"Data SHA-256 {data_route}"
+        remote_data = remote.get(data_route)
+        if remote_data is None or not 200 <= remote_data.status < 300:
+            rows.append((name, "FAIL", "remote data unavailable"))
+            failures = True
+        elif not data_path.exists():
+            rows.append((name, "FAIL", f"missing local {data_path.relative_to(site)}"))
+            failures = True
+        else:
+            matches, local_hash, remote_hash = sha256_comparison(data_path.read_bytes(), remote_data.body)
             status = "PASS" if matches else "FAIL"
             rows.append((name, status, f"local {local_hash}; remote {remote_hash}"))
             failures |= status == "FAIL"
