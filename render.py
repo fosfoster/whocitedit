@@ -1400,6 +1400,29 @@ def stacked_bar(segments: list[tuple[str, int, str]], *, label: str, width: int 
 
 
 
+def citation_count_outlier_warning(outlier: dict | None) -> str:
+    """Render selected-corpus citation-count evidence without changing quality.
+
+    This is intentionally separate from the record-quality assessment: the
+    comparison is useful context about a source value, not evidence that any
+    source field is wrong.
+    """
+    if not outlier:
+        return ""
+    venue = outlier.get("venue") or {}
+    venue_name = venue.get("name") or "the recorded venue"
+    return f'''<section class="citation-outlier-warning" role="alert" aria-labelledby="citation-outlier-heading">
+  <h2 id="citation-outlier-heading">Citation-count outlier</h2>
+  <p>The reported citation count is <b>{num(outlier.get("observed_openalex_citation_count"))}</b>.</p>
+  <p>Among the <b>{num(outlier.get("peer_count"))}</b> other works selected into this corpus from
+  <b>{e(outlier.get("year"))}</b> in <b>{e(venue_name)}</b>, the peer median is
+  <b>{num(outlier.get("peer_median"))}</b> citations; this reported count exceeds the conservative
+  cohort threshold of <b>{num(outlier.get("effective_threshold"))}</b>.</p>
+  <p>This comparison covers only works selected into this corpus, not the wider population. It is a
+  warning, not a correction: the source record remains unaltered.</p>
+</section>'''
+
+
 def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
                 quality_notes: dict, topic_ids: set[str] | None = None) -> str:
     wid = w["id"]
@@ -1488,6 +1511,7 @@ def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
     <table>{rows or '<tr><td class="faint">None recorded.</td></tr>'}</table>
   </div>
   {fields}
+  {citation_count_outlier_warning(w.get("citation_count_outlier"))}
   <div class="panel">
     <h2>Is this record sound?</h2>
     <p><span class="badge {q["band"]}">{q["band"]}</span></p>
