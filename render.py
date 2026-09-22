@@ -1523,7 +1523,8 @@ def render_work(w: dict, authors: dict, titles: dict, payloads: dict,
 
 def render_author(a: dict, notes: dict, bands: dict, payloads: dict,
                   institution_ids: set[str] | None = None,
-                  work_raw: dict[str, object] | None = None) -> str:
+                  work_raw: dict[str, object] | None = None,
+                  work_fields: dict[str, list[str]] | None = None) -> str:
     band = a["confidence"]["band"]
     works_rows = "".join(
         f'<tr><td><a href="../../w/{e(w["id"])}/">{e(w["title"])}</a></td>'
@@ -1539,6 +1540,24 @@ def render_author(a: dict, notes: dict, bands: dict, payloads: dict,
            if i.get("first_year") else "")
         for i in a["institutions"]
     ) or '<span class="faint">No institution on the works in this corpus.</span>'
+    member_fields = {
+        key
+        for w in a["works"]
+        for key in (work_fields or {}).get(w["id"], [])
+    }
+    rendered_fields = set()
+    field_links = []
+    for field in NAV_FIELDS:
+        key = field["key"]
+        if key in member_fields and key not in rendered_fields:
+            field_links.append(f'<li><a href="../../fields/{e(key)}/">{e(field["name"])}</a></li>')
+            rendered_fields.add(key)
+    fields = (
+        '<section class="author-field-memberships" '
+        'aria-labelledby="author-field-memberships-heading">'
+        f'<h2 id="author-field-memberships-heading">Fields</h2><ul>{"".join(field_links)}</ul></section>'
+        if field_links else ""
+    )
 
     href = {n["id"]: f"../{n['id']}/" for n in a["graph"]["nodes"]}
     href[a["id"]] = ""
@@ -1608,6 +1627,7 @@ def render_author(a: dict, notes: dict, bands: dict, payloads: dict,
        which is a number about this corpus and not about a career.</p>
     <p class="meta"><a href="{e(a["openalex_url"])}">OpenAlex record</a></p>
   </div>
+  {fields}
   <div class="panel">
     <h2>Provenance</h2>
     <p class="meta">{provenance_note}</p>
@@ -2413,6 +2433,7 @@ def main() -> int:
     institution_ids = set(institution_payloads)
     topic_ids = set(topic_payloads)
     work_raw = {}
+    work_fields = {}
     integrity_members = {signal: set() for signal in WORK_INTEGRITY_COHORTS}
     source_disagreement_members = {
         cohort: {} for cohort in SOURCE_DISAGREEMENT_COHORTS
@@ -2429,6 +2450,7 @@ def main() -> int:
             # export-driven shard already has its own keys and keeps them.
             w.setdefault("fields", legacy_fields)
             work_raw[wid] = w.get("raw")
+            work_fields[wid] = w["fields"]
             for item in w.get("quality", {}).get("evidence", []):
                 if (item["signal"] in integrity_members
                         and item["direction"] == "weakens"):
@@ -2454,7 +2476,7 @@ def main() -> int:
         for aid, a in json.loads(shard.read_text()).items():
             total += write(
                 f"a/{aid}/index.html",
-                render_author(a, notes, bands, payloads, institution_ids, work_raw),
+                render_author(a, notes, bands, payloads, institution_ids, work_raw, work_fields),
             )
             n += 1
 
