@@ -2274,6 +2274,10 @@ def render_methodology(corpus: dict, source_comparison_counts: dict | None = Non
 
     source_comparison_table = ""
     if source_comparison_counts is not None:
+        # The disagreeing count is the only cell with a page behind it, and its
+        # route is the cohort's own `path` -- the same value main() writes that
+        # page and its sitemap entry from, so the link cannot drift from its
+        # target and there is no second route map here to keep in step.
         comparison_rows = "".join(
             f'<tr><td>{e(config["source_label"])}</td>'
             f'<td>{e(config["field_label"])}</td>'
