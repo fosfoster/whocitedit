@@ -27,22 +27,22 @@ def check(condition, message):
 
 
 def comparison_cells(html):
-    """Map (source label, field label) to each row's rendered disagreeing cell."""
+    """Map (source label, field label) to each row's three rendered count cells."""
     panel = re.search(
         r"<h2>Source record field comparisons</h2>.*?<tbody>(.*?)</tbody>", html, re.S,
     )
     if panel is None:
         return None
     rows = re.findall(
-        r'<tr><td>(.*?)</td><td>(.*?)</td><td class="num">.*?</td>'
-        r'<td class="num">.*?</td><td class="num">(.*?)</td></tr>',
+        r'<tr><td>(.*?)</td><td>(.*?)</td><td class="num">(.*?)</td>'
+        r'<td class="num">(.*?)</td><td class="num">(.*?)</td></tr>',
         panel.group(1),
     )
-    return {(source, field): cell for source, field, cell in rows}
+    return {(source, field): counts for source, field, *counts in rows}
 
 
 def render_cells(cohorts):
-    """Render the methodology page against `cohorts` and return its disagreeing cells."""
+    """Render the methodology page against `cohorts` and return its count cells."""
     corpus = json.loads((DATA / "corpus.json").read_text())
     counts = {key: {"comparable": 2, "agreeing": 1, "disagreeing": 1} for key in cohorts}
     saved = render.SOURCE_DISAGREEMENT_COHORTS
@@ -56,6 +56,11 @@ def render_cells(cohorts):
 def main() -> int:
     bad = 0
     cohorts = render.SOURCE_DISAGREEMENT_COHORTS
+    bad += check(
+        len(cohorts) == 6,
+        f"SOURCE_DISAGREEMENT_COHORTS declares {len(cohorts)} cohorts; "
+        "the methodology matrix is three fields against two sources",
+    )
 
     # Each cohort's route is declared once, in SOURCE_DISAGREEMENT_COHORTS.
     # A duplicate route map would repeat the literal.
@@ -78,10 +83,18 @@ def main() -> int:
 
     for config in cohorts.values():
         label = (config["source_label"], config["field_label"])
-        cell = cells.get(label)
-        bad += check(cell is not None, f"no disagreement cell rendered for {label}")
-        if cell is None:
+        row = cells.get(label)
+        bad += check(row is not None, f"no disagreement cell rendered for {label}")
+        if row is None:
             continue
+        comparable, agreeing, cell = row
+        # The disagreement count is the cell that leads to the cohort page;
+        # comparable and agreeing have no page of their own to link to.
+        bad += check(
+            "<a " not in comparable and "<a " not in agreeing,
+            f"the {label} comparable/agreeing counts became links: "
+            f"{comparable!r}, {agreeing!r}",
+        )
         link = re.fullmatch(r'<a href="([^"]+)">(.*)</a>', cell)
         bad += check(link is not None, f"the {label} disagreement cell carries no href: {cell!r}")
         if link is None:
@@ -105,7 +118,7 @@ def main() -> int:
     moved_cells = render_cells(moved) or {}
     for config in moved.values():
         label = (config["source_label"], config["field_label"])
-        cell = moved_cells.get(label, "")
+        cell = moved_cells.get(label, ("", "", ""))[2]
         bad += check(
             f'href="../{config["path"]}"' in cell,
             f'the {label} disagreement cell ignored its rewritten '
