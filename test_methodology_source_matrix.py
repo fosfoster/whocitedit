@@ -126,9 +126,11 @@ def matrix_rows(html):
     )
     if panel is None:
         return None
+    # The disagreement cell carries an href to its cohort page, so its count is
+    # read out of the anchor rather than straight off the cell.
     return re.findall(
         r'<tr><td>(.*?)</td><td>(.*?)</td><td class="num">(.*?)</td>'
-        r'<td class="num">(.*?)</td><td class="num">(.*?)</td></tr>',
+        r'<td class="num">(.*?)</td><td class="num">(?:<a[^>]*>)?([\d,]+)(?:</a>)?</td></tr>',
         panel.group(1),
     )
 

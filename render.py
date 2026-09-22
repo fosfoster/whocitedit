@@ -1016,6 +1016,16 @@ SOURCE_DISAGREEMENT_COHORTS = {
 }
 
 
+def href_from_cohorts(cohort_key: tuple[str, str], root: str = "../") -> str:
+    """Return the href of one source-disagreement cohort page, seen from `root`.
+
+    Every link on this site is written relative to the page that carries it, so
+    the prefix is the caller's way back to the site root. Methodology, the one
+    page that links these cohorts, sits a single directory below it.
+    """
+    return root + SOURCE_DISAGREEMENT_COHORTS[cohort_key]["path"]
+
+
 def source_verdict_for(work: dict, field: str) -> str | None:
     """Return this field's exported source-comparison quality verdict, if any."""
     quality_data = work.get("quality")
@@ -2279,7 +2289,8 @@ def render_methodology(corpus: dict, source_comparison_counts: dict | None = Non
             f'<td>{e(config["field_label"])}</td>'
             f'<td class="num">{num(source_comparison_counts[(field, source)]["comparable"])}</td>'
             f'<td class="num">{num(source_comparison_counts[(field, source)]["agreeing"])}</td>'
-            f'<td class="num">{num(source_comparison_counts[(field, source)]["disagreeing"])}</td></tr>'
+            f'<td class="num"><a href="{e(href_from_cohorts((field, source)))}">'
+            f'{num(source_comparison_counts[(field, source)]["disagreeing"])}</a></td></tr>'
             for (field, source), config in SOURCE_DISAGREEMENT_COHORTS.items()
         )
         source_comparison_table = f"""
