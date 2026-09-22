@@ -105,6 +105,12 @@ footer.site { border-top: 1px solid var(--rule); margin-top: 48px; padding-top: 
 .faint { color: var(--ink-faint); }
 
 .panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 16px 18px; margin: 0 0 18px; }
+.citation-outlier-warning {
+  background: var(--panel); border: 1px solid var(--medium); border-left: 4px solid var(--medium);
+  border-radius: 10px; padding: 16px 18px; margin: 0 0 18px;
+}
+.citation-outlier-warning h2 { color: var(--medium); }
+.citation-outlier-warning p:last-child { margin-bottom: 0; }
 .grid { display: grid; gap: 18px; }
 @media (min-width: 820px) { .grid.two { grid-template-columns: 1fr 300px; align-items: start; } }
 
