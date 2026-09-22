@@ -468,9 +468,10 @@ def work_csl_json(w: dict) -> dict:
     always goes through ``csl_type()``, which supplies the ``document``
     fallback for a work type this site doesn't recognise.
     """
-    item: dict = {"id": w["id"], "type": csl_type(w.get("type"))}
+    item: dict = {"id": w["id"]}
     if w.get("title"):
         item["title"] = w["title"]
+    item["type"] = csl_type(w.get("type"))
     authors = [{"literal": a["name"]} for a in w.get("authors") or [] if a.get("name")]
     if authors:
         item["author"] = authors
