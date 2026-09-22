@@ -128,13 +128,40 @@ def matrix_rows(html):
         return None
     return re.findall(
         r'<tr><td>(.*?)</td><td>(.*?)</td><td class="num">(.*?)</td>'
-        r'<td class="num">(.*?)</td><td class="num">(.*?)</td></tr>',
+        r'<td class="num">(.*?)</td><td class="num">(?:<a[^>]*>)?([\d,]+)(?:</a>)?</td></tr>',
         panel.group(1),
     )
 
 
+def matrix_rows_tolerates_href_disagreement_cell():
+    bad = 0
+    bare_html = (
+        "<h2>Source record field comparisons</h2><table><tbody>"
+        '<tr><td>Crossref</td><td>Title</td><td class="num">3</td>'
+        '<td class="num">2</td><td class="num">1</td></tr>'
+        "</tbody></table>"
+    )
+    linked_html = (
+        "<h2>Source record field comparisons</h2><table><tbody>"
+        '<tr><td>Crossref</td><td>Title</td><td class="num">3</td>'
+        '<td class="num">2</td><td class="num">'
+        '<a href="works/title-disagreement/crossref/">1</a></td></tr>'
+        "</tbody></table>"
+    )
+    bad += check(
+        matrix_rows(bare_html) == [("Crossref", "Title", "3", "2", "1")],
+        "matrix_rows does not match a bare-integer disagreement cell",
+    )
+    bad += check(
+        matrix_rows(linked_html) == [("Crossref", "Title", "3", "2", "1")],
+        "matrix_rows does not match an href-wrapped disagreement cell",
+    )
+    return bad
+
+
 def main():
     bad = 0
+    bad += matrix_rows_tolerates_href_disagreement_cell()
     temporary = Path(tempfile.mkdtemp())
     saved = render.DATA, render.SITE, render.ASSETS, render.NAV_FIELDS
     try:
