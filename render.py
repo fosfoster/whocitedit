@@ -543,7 +543,8 @@ def load_optional(name: str, default):
     return json.loads(path.read_text()) if path.exists() else default
 
 
-def search_index(works: list, authors: list, institutions: list, topics: list) -> list[dict]:
+def search_index(works: list, authors: list, institutions: list, topics: list,
+                  work_fields: dict) -> list[dict]:
     """Project browse indexes into the small, stable global search contract."""
     return [
         {
@@ -552,6 +553,7 @@ def search_index(works: list, authors: list, institutions: list, topics: list) -
             "label": row[label],
             **({"state": row[state]} if state else {}),
             **({"aliases": [row["doi"]]} if kind == "work" and row.get("doi") else {}),
+            **({"fields": work_fields[row["id"]]} if kind == "work" and work_fields.get(row["id"]) else {}),
         }
         for kind, label, state, rows in (
             ("work", "title", "quality", works),
@@ -2603,7 +2605,7 @@ def main() -> int:
     total += write(
         "data/search-index.json",
         json.dumps(
-            search_index(works_index, authors_index, institutions_index, topics_index),
+            search_index(works_index, authors_index, institutions_index, topics_index, work_fields),
             sort_keys=True,
             separators=(",", ":"),
         ),

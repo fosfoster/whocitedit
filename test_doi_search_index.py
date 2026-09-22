@@ -60,9 +60,10 @@ def main() -> int:
         first = search_path.read_bytes()
         records = json.loads(first)
         work_records = {row["id"]: row for row in records if row["kind"] == "work"}
+        w1_fields = works_by_id["W1"]["fields"]
         bad += check(work_records["W1"] == {
             "kind": "work", "id": "W1", "label": "Most Cited Work",
-            "state": "complete", "aliases": [DOI],
+            "state": "complete", "aliases": [DOI], "fields": w1_fields,
         }, "DOI-bearing work search record changed its contract or alias")
         bad += check(all("aliases" not in work_records[wid] for wid in ("W2", "W3")),
                      "DOI-less work search records gained aliases")

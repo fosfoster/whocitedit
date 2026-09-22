@@ -19,14 +19,31 @@ def check(cond, msg):
     return 0
 
 
+def work_fields_from_shards(data: Path) -> dict:
+    """The wid -> field keys mapping render derives from the work shards.
+
+    This is the same source ``render.search_index`` is fed from (``main()``'s
+    ``work_fields``), not the browse-index row -- a legacy corpus has no
+    ``fields`` key on its works-index rows at all.
+    """
+    work_fields = {}
+    for shard in sorted((data / "works").glob("*.json")):
+        for wid, w in json.loads(shard.read_text()).items():
+            work_fields[wid] = w.get("fields", [])
+    return work_fields
+
+
 def expected_records(data: Path, collections) -> list[dict]:
     state_fields = {"work": "quality", "author": "band"}
+    work_fields = work_fields_from_shards(data)
     return [
         {
             "kind": kind,
             "id": row["id"],
             "label": row[label],
             **({"state": row[state_fields[kind]]} if kind in state_fields else {}),
+            **({"fields": work_fields[row["id"]]}
+               if kind == "work" and work_fields.get(row["id"]) else {}),
         }
         for kind, index, label in collections
         for row in json.loads((data / index).read_text())
@@ -81,10 +98,13 @@ def main() -> int:
             all("state" not in record for record in records
                 if record["kind"] in ("institution", "topic")),
             "institution and topic search records carry state")
+        work_fields = work_fields_from_shards(render.DATA)
         bad += check(
-            all(set(record) == ({"kind", "id", "label", "state"}
-                                if record["kind"] in ("work", "author")
-                                else {"kind", "id", "label"}) for record in records),
+            all(set(record) == (
+                {"kind", "id", "label"}
+                | ({"state"} if record["kind"] in ("work", "author") else set())
+                | ({"fields"} if record["kind"] == "work" and work_fields.get(record["id"]) else set())
+            ) for record in records),
             "search records do not have the expected compact schema")
         bad += check(len({(record["kind"], record["id"]) for record in records}) == len(records),
                      "search index contains duplicate entity records")
