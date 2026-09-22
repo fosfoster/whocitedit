@@ -2279,7 +2279,8 @@ def render_methodology(corpus: dict, source_comparison_counts: dict | None = Non
             f'<td>{e(config["field_label"])}</td>'
             f'<td class="num">{num(source_comparison_counts[(field, source)]["comparable"])}</td>'
             f'<td class="num">{num(source_comparison_counts[(field, source)]["agreeing"])}</td>'
-            f'<td class="num">{num(source_comparison_counts[(field, source)]["disagreeing"])}</td></tr>'
+            f'<td class="num"><a href="../{e(config["path"])}">'
+            f'{num(source_comparison_counts[(field, source)]["disagreeing"])}</a></td></tr>'
             for (field, source), config in SOURCE_DISAGREEMENT_COHORTS.items()
         )
         source_comparison_table = f"""

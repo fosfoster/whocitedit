@@ -158,7 +158,9 @@ def main():
         }
         bad += check(rows is not None, "methodology has no source-field comparison table")
         actual = {
-            (source, field): tuple(int(value.replace(",", "")) for value in counts)
+            (source, field): tuple(
+                int(re.sub(r"<[^>]+>", "", value).replace(",", "")) for value in counts
+            )
             for source, field, *counts in (rows or [])
         }
         bad += check(len(rows or []) == len(render.SOURCE_DISAGREEMENT_COHORTS),
