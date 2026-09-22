@@ -2122,6 +2122,11 @@ def render_cohort(kind: str, band: str, index_rows: list) -> str:
     )
 
 
+def href_for_disagreement_cohort(field: str, source: str) -> str:
+    """Relative href, from methodology/, for a SOURCE_DISAGREEMENT_COHORTS entry."""
+    return f'../{SOURCE_DISAGREEMENT_COHORTS[(field, source)]["path"]}'
+
+
 def source_observation_cell(observations: list[dict]) -> str:
     """Render parallel values without choosing or reconciling among them."""
     if not observations:
@@ -2279,7 +2284,8 @@ def render_methodology(corpus: dict, source_comparison_counts: dict | None = Non
             f'<td>{e(config["field_label"])}</td>'
             f'<td class="num">{num(source_comparison_counts[(field, source)]["comparable"])}</td>'
             f'<td class="num">{num(source_comparison_counts[(field, source)]["agreeing"])}</td>'
-            f'<td class="num">{num(source_comparison_counts[(field, source)]["disagreeing"])}</td></tr>'
+            f'<td class="num"><a href="{e(href_for_disagreement_cohort(field, source))}">'
+            f'{num(source_comparison_counts[(field, source)]["disagreeing"])}</a></td></tr>'
             for (field, source), config in SOURCE_DISAGREEMENT_COHORTS.items()
         )
         source_comparison_table = f"""
