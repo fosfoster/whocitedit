@@ -38,6 +38,7 @@ READER_ASSET_CONTENTS = {
 WORK_DOWNLOAD_CONTENTS = {
     "citation.bib": b"@article{W1, title={Fixture}}\n",
     "citation.ris": b"TY  - JOUR\nTI  - Fixture\nER  - \n",
+    "citation.csl.json": b'{\n  "id": "W1",\n  "title": "Fixture",\n  "type": "document"\n}\n',
 }
 
 
@@ -294,14 +295,14 @@ def main():
     with offline_fixture() as (site, pages, assets, responses):
         expected_urls = {BASE_URL + route for route in (
             "/robots.txt", "/sitemap.xml", "/", "/methodology/", *ROUTES,
-            "/w/W1/citation.bib", "/w/W1/citation.ris",
+            "/w/W1/citation.bib", "/w/W1/citation.ris", "/w/W1/citation.csl.json",
             "/assets/style.css", "/assets/app.js", "/assets/islands.js",
         )}
 
         code, output, calls = run_case(site, assets, responses)
         bad += check(code == 0, "matching deployment did not return 0")
-        bad += check(set(calls) == expected_urls and len(calls) == 13,
-                     "matching deployment did not request exactly the thirteen resources")
+        bad += check(set(calls) == expected_urls and len(calls) == 14,
+                     "matching deployment did not request exactly the fourteen resources")
         bad += check("Deployment parity" in output and "PASS" in output,
                      "matching deployment did not print a PASS table")
         for download_name in check_deploy.WORK_DOWNLOADS:
@@ -374,7 +375,7 @@ def main():
 
         output = io.StringIO()
         code = check_deploy.check_deploy(BASE_URL, site, assets, unreachable, output)
-        bad += check(code == 2 and len(calls) == 13 and "Deployment parity" in output.getvalue(),
+        bad += check(code == 2 and len(calls) == 14 and "Deployment parity" in output.getvalue(),
                      "unreachable host did not return 2 with a complete table")
 
         missing = site.parent / "missing-site"
