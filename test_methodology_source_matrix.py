@@ -133,6 +133,20 @@ def matrix_rows(html):
     )
 
 
+def displayed_number(cell):
+    text = re.sub(r"<[^>]+>", "", cell)
+    if re.fullmatch(r"[0-9][0-9,]*", text) is None:
+        raise ValueError(f"cell has no displayed numeric value: {cell!r}")
+    return int(text.replace(",", ""))
+
+
+def source_field_counts(rows):
+    return {
+        (source, field): tuple(displayed_number(value) for value in counts)
+        for source, field, *counts in rows
+    }
+
+
 def main():
     bad = 0
     temporary = Path(tempfile.mkdtemp())
@@ -157,14 +171,23 @@ def main():
             ("Europe PMC", "Publication date"): (1, 1, 0),
         }
         bad += check(rows is not None, "methodology has no source-field comparison table")
-        actual = {
-            (source, field): tuple(int(value.replace(",", "")) for value in counts)
-            for source, field, *counts in (rows or [])
-        }
+        actual = source_field_counts(rows or [])
         bad += check(len(rows or []) == len(render.SOURCE_DISAGREEMENT_COHORTS),
                      "methodology does not render exactly six source-field rows")
         bad += check(actual == expected,
                      f"source-field counts are {actual!r}, expected {expected!r}")
+        wrong_rows = list(rows or [])
+        if wrong_rows:
+            source, field, comparable, agreeing, disagreeing = wrong_rows[0]
+            wrong_count = displayed_number(disagreeing) + 1
+            wrong_rows[0] = (
+                source, field, comparable, agreeing,
+                f'<a href="../wrong-cohort/">{wrong_count}</a>',
+            )
+        bad += check(
+            bool(wrong_rows) and source_field_counts(wrong_rows) != expected,
+            "matrix count validation accepts a wrong linked disagreement count",
+        )
         bad += check(
             all(comparable == agreeing + disagreeing
                 for comparable, agreeing, disagreeing in actual.values()),
