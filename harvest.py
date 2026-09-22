@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fetch OpenAlex corpus metadata, COCI references, and Crossref work records.
+"""Fetch OpenAlex corpus metadata and reference records from source indexes.
 
 THIS IS NOT A BUILDER STEP. It needs the network, it spends a metered credit
 allowance, and it writes files that are gitignored. `tools/check.sh` never calls
@@ -23,6 +23,8 @@ from crossref import normalize_doi as normalize_crossref_doi
 from openalex import Client, short_id
 from opencitations import Client as CociClient
 from opencitations import normalize_doi
+from semanticscholar import Client as SemanticScholarClient
+from semanticscholar import normalize_doi as normalize_semanticscholar_doi
 
 ROOT = Path(__file__).parent
 CORPUS = json.loads((ROOT / "corpus.json").read_text())
@@ -149,6 +151,16 @@ def harvest_crossref(client: CrossrefClient) -> int:
     for done, doi in enumerate(dois, start=1):
         client.work(doi)
         print(f"  crossref {done}/{len(dois)}  ({client.spent} requests)", flush=True)
+    return len(dois)
+
+
+def harvest_semanticscholar(client: SemanticScholarClient) -> int:
+    """Store Semantic Scholar reference envelopes for each OpenAlex work DOI once."""
+    dois = dois_in_raw(normalize_semanticscholar_doi)
+    print(f"  {len(dois)} DOI-bearing works referenced by the stored OpenAlex pages")
+    for done, doi in enumerate(dois, start=1):
+        client.references(doi)
+        print(f"  semanticscholar {done}/{len(dois)}  ({client.spent} requests)", flush=True)
     return len(dois)
 
 
