@@ -2216,7 +2216,7 @@ def render_integrity_cohort(signal: str, works_index: list, member_ids: set,
     )
 
 
-def render_methodology(corpus: dict) -> str:
+def render_methodology(corpus: dict, source_comparison_counts: dict | None = None) -> str:
     abstracts = corpus["abstracts"]
     declared_sources = corpus.get("citation_sources", corpus["sources"])
     if isinstance(declared_sources, dict):
@@ -2252,6 +2252,30 @@ def render_methodology(corpus: dict) -> str:
 <p class="meta">Currently {num(corroborated_total)} of {num(total)} citation edges are corroborated.</p>
 """
 
+    source_comparison_table = ""
+    if source_comparison_counts is not None:
+        comparison_rows = "".join(
+            f'<tr><td>{e(config["source_label"])}</td>'
+            f'<td>{e(config["field_label"])}</td>'
+            f'<td class="num">{num(source_comparison_counts[(field, source)]["comparable"])}</td>'
+            f'<td class="num">{num(source_comparison_counts[(field, source)]["agreeing"])}</td>'
+            f'<td class="num">{num(source_comparison_counts[(field, source)]["disagreeing"])}</td></tr>'
+            for (field, source), config in SOURCE_DISAGREEMENT_COHORTS.items()
+        )
+        source_comparison_table = f"""
+<div class="panel">
+<h2>Source record field comparisons</h2>
+<p>These counts compare OpenAlex with Crossref and Europe PMC for each field. Records
+   without both observations are unavailable for that source and field, so they are outside
+   the comparable total. Agreeing plus disagreeing always equals comparable.</p>
+<div class="scroll"><table>
+  <thead><tr><th>Source</th><th>Field</th><th class="num">Comparable</th>
+  <th class="num">Agreeing</th><th class="num">Disagreeing</th></tr></thead>
+  <tbody>{comparison_rows}</tbody>
+</table></div>
+</div>
+"""
+
     body = f"""
 <h1>Methodology</h1>
 <p class="lede">What is in this corpus, where every figure came from, and the three
@@ -2278,6 +2302,8 @@ def render_methodology(corpus: dict) -> str:
    identifies the single index, and an OpenCitations-only or Crossref-only edge is
    explicitly marked unconfirmed by OpenAlex.</p>
 {coverage_table}</div>
+
+{source_comparison_table}
 
 <div class="panel">
 <h2>Collaboration weight is not a count of shared papers</h2>
@@ -2446,8 +2472,9 @@ def main() -> int:
     source_disagreement_members = {
         cohort: {} for cohort in SOURCE_DISAGREEMENT_COHORTS
     }
-    source_comparable_totals = {
-        cohort: 0 for cohort in SOURCE_DISAGREEMENT_COHORTS
+    source_comparison_counts = {
+        cohort: {"comparable": 0, "agreeing": 0, "disagreeing": 0}
+        for cohort in SOURCE_DISAGREEMENT_COHORTS
     }
 
     for shard in sorted((DATA / "works").glob("*.json")):
@@ -2468,7 +2495,11 @@ def main() -> int:
                 observations = source_observations(w, field, source)
                 if (is_comparable(w, field)
                         and source_observations_are_comparable(observations)):
-                    source_comparable_totals[cohort] += 1
+                    source_comparison_counts[cohort]["comparable"] += 1
+                    if disagrees_with(w, field, source):
+                        source_comparison_counts[cohort]["disagreeing"] += 1
+                    else:
+                        source_comparison_counts[cohort]["agreeing"] += 1
                 if disagrees_with(w, field, source):
                     source_disagreement_members[cohort][wid] = observations
             total += write(
@@ -2532,12 +2563,15 @@ def main() -> int:
                 source,
                 works_index,
                 source_disagreement_members[(field, source)],
-                source_comparable_totals[(field, source)],
+                source_comparison_counts[(field, source)]["comparable"],
             ),
         )
     total += write("institutions/index.html", render_browse("institutions", institutions_index, corpus))
     total += write("topics/index.html", render_browse("topics", topics_index, corpus))
-    total += write("methodology/index.html", render_methodology(corpus))
+    total += write(
+        "methodology/index.html",
+        render_methodology(corpus, source_comparison_counts),
+    )
     n += 10 + len(fields_index) + len(SOURCE_DISAGREEMENT_COHORTS) + sum(
         1 + len(config.get("legacy_paths", ()))
         for config in WORK_INTEGRITY_COHORTS.values()
