@@ -1,11 +1,22 @@
 #!/usr/bin/env python3
-"""The six methodology disagreement cells link to their SOURCE_DISAGREEMENT_COHORTS route."""
+"""Every methodology disagreement cell links to the route its own
+SOURCE_DISAGREEMENT_COHORTS entry declares, and that entry is the only place
+render.py declares it.
+
+Two separate claims, because a hard-coded href and a derived one look the same
+in one rendered page: the six cells match the declared routes, and rewriting a
+cohort's `path` moves its cell. A second route map would survive the first
+check and fail the second.
+"""
+import json
 import re
 import sys
 from pathlib import Path
 
 import render
-import test_full_corpus_render
+
+
+DATA = Path(__file__).parent / "web" / "data"
 
 
 def check(condition, message):
@@ -15,47 +26,94 @@ def check(condition, message):
     return 0
 
 
+def comparison_cells(html):
+    """Map (source label, field label) to each row's rendered disagreeing cell."""
+    panel = re.search(
+        r"<h2>Source record field comparisons</h2>.*?<tbody>(.*?)</tbody>", html, re.S,
+    )
+    if panel is None:
+        return None
+    rows = re.findall(
+        r'<tr><td>(.*?)</td><td>(.*?)</td><td class="num">.*?</td>'
+        r'<td class="num">.*?</td><td class="num">(.*?)</td></tr>',
+        panel.group(1),
+    )
+    return {(source, field): cell for source, field, cell in rows}
+
+
+def render_cells(cohorts):
+    """Render the methodology page against `cohorts` and return its disagreeing cells."""
+    corpus = json.loads((DATA / "corpus.json").read_text())
+    counts = {key: {"comparable": 2, "agreeing": 1, "disagreeing": 1} for key in cohorts}
+    saved = render.SOURCE_DISAGREEMENT_COHORTS
+    try:
+        render.SOURCE_DISAGREEMENT_COHORTS = cohorts
+        return comparison_cells(render.render_methodology(corpus, counts))
+    finally:
+        render.SOURCE_DISAGREEMENT_COHORTS = saved
+
+
 def main() -> int:
     bad = 0
+    cohorts = render.SOURCE_DISAGREEMENT_COHORTS
 
+    # Each cohort's route is declared once, in SOURCE_DISAGREEMENT_COHORTS.
+    # A duplicate route map would repeat the literal.
     render_source = Path(render.__file__).read_text()
-    for (field, source), config in render.SOURCE_DISAGREEMENT_COHORTS.items():
+    for config in cohorts.values():
         occurrences = render_source.count(config["path"])
         bad += check(
             occurrences == 1,
-            f"{config['path']!r} appears {occurrences} times in render.py; "
-            "expected a single definition in SOURCE_DISAGREEMENT_COHORTS with no "
-            "second route map",
+            f'render.py names the route {config["path"]!r} {occurrences} times; '
+            "SOURCE_DISAGREEMENT_COHORTS should be its only declaration",
         )
 
-    with test_full_corpus_render.rendered_site() as site:
-        html = (site / "methodology" / "index.html").read_text()
+    cells = render_cells(cohorts)
+    bad += check(cells is not None, "methodology renders no source-field comparison table")
+    cells = cells or {}
+    bad += check(
+        len(cells) == len(cohorts),
+        f"methodology renders {len(cells)} source-field rows, expected {len(cohorts)}",
+    )
 
-        for (field, source), config in render.SOURCE_DISAGREEMENT_COHORTS.items():
-            expected_href = f'../{config["path"]}'
-            link = re.search(
-                rf'<td>{re.escape(config["source_label"])}</td>'
-                rf'<td>{re.escape(config["field_label"])}</td>'
-                r'.*?<a href="([^"]+)">',
-                html,
-            )
-            bad += check(
-                link is not None,
-                f"no disagreement cell found for {config['source_label']} / {config['field_label']}",
-            )
-            if link is not None:
-                bad += check(
-                    link.group(1) == expected_href,
-                    f"{config['source_label']} / {config['field_label']} cell href "
-                    f"{link.group(1)!r} does not match SOURCE_DISAGREEMENT_COHORTS "
-                    f"path {expected_href!r}",
-                )
+    for config in cohorts.values():
+        label = (config["source_label"], config["field_label"])
+        cell = cells.get(label)
+        bad += check(cell is not None, f"no disagreement cell rendered for {label}")
+        if cell is None:
+            continue
+        link = re.fullmatch(r'<a href="([^"]+)">(.*)</a>', cell)
+        bad += check(link is not None, f"the {label} disagreement cell carries no href: {cell!r}")
+        if link is None:
+            continue
+        bad += check(
+            link.group(1) == f'../{config["path"]}',
+            f'the {label} disagreement cell links to {link.group(1)!r}, not to its '
+            f'SOURCE_DISAGREEMENT_COHORTS route {"../" + config["path"]!r}',
+        )
+        bad += check(
+            link.group(2) == render.num(1),
+            f"the {label} disagreement link lost its count: {cell!r}",
+        )
 
-    if bad:
-        print(f"FAILED: {bad} check(s)")
-        return 1
-    print("OK: methodology disagreement cells derive their hrefs from SOURCE_DISAGREEMENT_COHORTS")
-    return 0
+    # Rewrite every route and the cells must follow, which a second map holding
+    # the original routes could not do.
+    moved = {
+        key: {**config, "path": f'moved/{config["path"]}'}
+        for key, config in cohorts.items()
+    }
+    moved_cells = render_cells(moved) or {}
+    for config in moved.values():
+        label = (config["source_label"], config["field_label"])
+        cell = moved_cells.get(label, "")
+        bad += check(
+            f'href="../{config["path"]}"' in cell,
+            f'the {label} disagreement cell ignored its rewritten '
+            f'SOURCE_DISAGREEMENT_COHORTS route {config["path"]!r}: {cell!r}',
+        )
+
+    print("test_methodology_disagreement_href:", "FAILED" if bad else "ok")
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":

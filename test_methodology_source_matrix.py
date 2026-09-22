@@ -126,9 +126,11 @@ def matrix_rows(html):
     )
     if panel is None:
         return None
+    # The disagreeing count is a link to that cohort's page; the route it points
+    # at is pinned by test_methodology_disagreement_href.py.
     return re.findall(
         r'<tr><td>(.*?)</td><td>(.*?)</td><td class="num">(.*?)</td>'
-        r'<td class="num">(.*?)</td><td class="num">(.*?)</td></tr>',
+        r'<td class="num">(.*?)</td><td class="num"><a href="[^"]+">(.*?)</a></td></tr>',
         panel.group(1),
     )
 
