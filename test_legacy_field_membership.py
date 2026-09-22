@@ -8,6 +8,8 @@ still owes each of those work pages its Fields section, so this drives
 ``render.main()`` over that exact shape rather than handing ``render_work`` a
 dict that already has the key.
 """
+from __future__ import annotations
+
 import html
 import json
 import re

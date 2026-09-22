@@ -11,6 +11,8 @@ for character, and neither the complete hash nor the exported fetch time is
 dropped to make room for the link. Nothing under `web/data/` or `web/site/` is
 written, and the gate checks that it was not.
 """
+from __future__ import annotations
+
 import re
 import sys
 from html.parser import HTMLParser

@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Focused export-to-render provenance and citation-source contract."""
+from __future__ import annotations
+
 import json
 import shutil
 import sys
@@ -57,7 +59,7 @@ def stage_provenance(conn) -> None:
     )
     conn.execute(
         "UPDATE citation SET sources = ? WHERE citing_id = 'W3' AND cited_id = 'W2'",
-        (json.dumps(["openalex", "opencitations", "europepmc", "crossref", "arxiv"]),),
+        (json.dumps(["openalex", "opencitations", "europepmc", "crossref", "arxiv", "semanticscholar"]),),
     )
     conn.commit()
 
@@ -120,7 +122,7 @@ def main() -> int:
         declarations = corpus.get("citation_sources", {})
         bad += check(
             asserted_sources == set(declarations)
-            == {"openalex", "opencitations", "europepmc", "crossref", "arxiv"},
+            == {"openalex", "opencitations", "europepmc", "crossref", "arxiv", "semanticscholar"},
             f"edge sources {sorted(asserted_sources)} do not join exactly to declarations "
             f"{sorted(declarations)}",
         )

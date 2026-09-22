@@ -35,6 +35,10 @@ READER_ASSET_CONTENTS = {
     "app.js": b"// fixture app bundle\n",
     "islands.js": b"fixture island bundle\n",
 }
+WORK_DOWNLOAD_CONTENTS = {
+    "citation.bib": b"@article{W1, title={Fixture}}\n",
+    "citation.ris": b"TY  - JOUR\nTI  - Fixture\nER  - \n",
+}
 
 
 def write_render(root):
@@ -44,6 +48,9 @@ def write_render(root):
         path = root / ("index.html" if route == "/" else route.strip("/") + "/index.html")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(html(page_title))
+    for route in (route for route in ROUTES if route.startswith("/w/")):
+        for download_name, content in WORK_DOWNLOAD_CONTENTS.items():
+            (root / route.strip("/") / download_name).write_bytes(content)
     (root / "sitemap.xml").write_bytes(sitemap(("/", "/methodology/") + ROUTES))
     assets = root.parent / "assets"
     assets.mkdir(parents=True, exist_ok=True)
@@ -60,6 +67,9 @@ def fixture_responses(pages, assets):
     for asset_name in READER_ASSET_CONTENTS:
         responses[f"/assets/{asset_name}"] = (assets / asset_name).read_bytes()
     responses.update({route: html(page_title) for route, page_title in pages.items()})
+    for route in (route for route in ROUTES if route.startswith("/w/")):
+        for download_name, content in WORK_DOWNLOAD_CONTENTS.items():
+            responses[route + download_name] = content
     return responses
 
 
@@ -227,20 +237,86 @@ def test_reader_critical_asset_hashes():
     return 1 if bad else 0
 
 
+def test_work_download_hashes():
+    bad = 0
+    with offline_fixture() as (site, _, assets, responses):
+        for download_name in check_deploy.WORK_DOWNLOADS:
+            route = f"/w/W1/{download_name}"
+            drifted = dict(responses)
+            drifted[route] = responses[route] + b"tampered"
+            code, output, _ = run_case(site, assets, drifted)
+            row = next((line for line in output.splitlines()
+                        if line.startswith(f"Download SHA-256 {route}")), "")
+            local_hash = hashlib.sha256(responses[route]).hexdigest()
+            remote_hash = hashlib.sha256(drifted[route]).hexdigest()
+            bad += check(
+                code == 1 and "FAIL" in row and f"local {local_hash}; remote {remote_hash}" in row,
+                f"drifting {download_name} alone did not fail its download hash row",
+            )
+            for other_name in check_deploy.WORK_DOWNLOADS:
+                if other_name == download_name:
+                    continue
+                other_route = f"/w/W1/{other_name}"
+                other_row = next((line for line in output.splitlines()
+                                  if line.startswith(f"Download SHA-256 {other_route}")), "")
+                bad += check("PASS" in other_row,
+                             f"drifting {download_name} incorrectly failed {other_name}'s hash row")
+            work_html_row = next((line for line in output.splitlines()
+                                  if line.startswith("HTML SHA-256 /w/W1/")), "")
+            bad += check("PASS" in work_html_row,
+                         f"drifting {download_name} incorrectly failed the work HTML hash row")
+
+        missing_site = site.parent / "missing-download-site"
+        shutil.copytree(site, missing_site)
+        (missing_site / "w/W1/citation.bib").unlink()
+        code, output, _ = run_case(missing_site, assets, responses)
+        row = next((line for line in output.splitlines()
+                    if line.startswith("Download SHA-256 /w/W1/citation.bib")), "")
+        bad += check(code == 1 and "FAIL" in row and "missing local" in row,
+                     "a missing local work download did not fail with a missing-local detail")
+
+        def unavailable_ris(url):
+            if url == BASE_URL + "/w/W1/citation.ris":
+                return check_deploy.Response(404, b"not found")
+            return check_deploy.Response(200, responses[url.removeprefix(BASE_URL)])
+
+        output = io.StringIO()
+        code = check_deploy.check_deploy(BASE_URL, site, assets, unavailable_ris, output)
+        row = next((line for line in output.getvalue().splitlines()
+                    if line.startswith("Download SHA-256 /w/W1/citation.ris")), "")
+        bad += check(code == 1 and "FAIL" in row and "remote download unavailable" in row,
+                     "an unavailable remote work download did not fail without returning exit 2")
+    return 1 if bad else 0
+
+
 def main():
     bad = 0
     with offline_fixture() as (site, pages, assets, responses):
         expected_urls = {BASE_URL + route for route in (
             "/robots.txt", "/sitemap.xml", "/", "/methodology/", *ROUTES,
+            "/w/W1/citation.bib", "/w/W1/citation.ris",
             "/assets/style.css", "/assets/app.js", "/assets/islands.js",
         )}
 
         code, output, calls = run_case(site, assets, responses)
         bad += check(code == 0, "matching deployment did not return 0")
-        bad += check(set(calls) == expected_urls and len(calls) == 11,
-                     "matching deployment did not request exactly the eleven resources")
+        bad += check(set(calls) == expected_urls and len(calls) == 13,
+                     "matching deployment did not request exactly the thirteen resources")
         bad += check("Deployment parity" in output and "PASS" in output,
                      "matching deployment did not print a PASS table")
+        for download_name in check_deploy.WORK_DOWNLOADS:
+            row = next((line for line in output.splitlines()
+                        if line.startswith(f"HTTP /w/W1/{download_name}")), "")
+            bad += check("PASS" in row and "200" in row,
+                         f"matching deployment did not pass {download_name}'s HTTP row")
+            route = f"/w/W1/{download_name}"
+            hash_row = next((line for line in output.splitlines()
+                             if line.startswith(f"Download SHA-256 {route}")), "")
+            content_hash = hashlib.sha256(responses[route]).hexdigest()
+            bad += check(
+                "PASS" in hash_row and f"local {content_hash}; remote {content_hash}" in hash_row,
+                f"matching deployment did not report matching download hashes for {download_name}",
+            )
         for route in ("/", "/methodology/"):
             row = next((line for line in output.splitlines()
                         if line.startswith(f"HTML SHA-256 {route}")), "")
@@ -270,6 +346,21 @@ def main():
         bad += check(code == 1 and "HTML SHA-256 /a/A1/" in output and "FAIL" in output,
                      "detail HTML mismatch did not return 1 with a hash row")
 
+        def missing_ris(url):
+            route = url.removeprefix(BASE_URL)
+            if route == "/w/W1/citation.ris":
+                return check_deploy.Response(404, b"not found")
+            return check_deploy.Response(200, responses[route])
+
+        output = io.StringIO()
+        code = check_deploy.check_deploy(BASE_URL, site, assets, missing_ris, output)
+        bib_row = next((line for line in output.getvalue().splitlines()
+                        if line.startswith("HTTP /w/W1/citation.bib")), "")
+        ris_row = next((line for line in output.getvalue().splitlines()
+                        if line.startswith("HTTP /w/W1/citation.ris")), "")
+        bad += check(code == 1 and "PASS" in bib_row and "FAIL" in ris_row and "404" in ris_row,
+                     "a missing work citation download did not report its HTTP failure")
+
         stale_bundle = dict(responses)
         stale_bundle["/assets/islands.js"] = b"old fixture island bundle\n"
         code, output, _ = run_case(site, assets, stale_bundle)
@@ -283,7 +374,7 @@ def main():
 
         output = io.StringIO()
         code = check_deploy.check_deploy(BASE_URL, site, assets, unreachable, output)
-        bad += check(code == 2 and len(calls) == 11 and "Deployment parity" in output.getvalue(),
+        bad += check(code == 2 and len(calls) == 13 and "Deployment parity" in output.getvalue(),
                      "unreachable host did not return 2 with a complete table")
 
         missing = site.parent / "missing-site"
@@ -299,10 +390,33 @@ def main():
         bad += check(BASE_URL + "/i/I1/" not in calls,
                      "checker fetched a detail route with no local sample")
 
+        no_work = site.parent / "no-work-site"
+        shutil.copytree(site, no_work)
+        shutil.rmtree(no_work / "w")
+        no_work_routes = ("/", "/methodology/", "/a/A1/", "/i/I1/", "/t/T1/")
+        (no_work / "sitemap.xml").write_bytes(sitemap(no_work_routes))
+        no_work_responses = fixture_responses(pages, assets)
+        no_work_responses["/sitemap.xml"] = sitemap(no_work_routes)
+        code, output, calls = run_case(no_work, assets, no_work_responses)
+        download_skips = [
+            next((line for line in output.splitlines()
+                  if line.startswith(f"Download SHA-256 /w/ {download_name}")), "")
+            for download_name in check_deploy.WORK_DOWNLOADS
+        ]
+        download_urls = [BASE_URL + "/w/W1/" + download_name
+                         for download_name in check_deploy.WORK_DOWNLOADS]
+        bad += check(code == 0 and all(
+            "SKIP" in row and "no local sitemap sample" in row for row in download_skips
+        ),
+                     "missing local work sample did not produce non-failing download SKIP rows")
+        bad += check(not any(url in calls for url in download_urls),
+                     "checker fetched work downloads with no local work sample")
+
     bad += test_shared_html_content_drift()
     bad += test_detail_html_content_drift()
     bad += test_sitemap_route_set_parity()
     bad += test_reader_critical_asset_hashes()
+    bad += test_work_download_hashes()
 
     print("test_check_deploy:", "FAILED" if bad else "ok")
     return 1 if bad else 0

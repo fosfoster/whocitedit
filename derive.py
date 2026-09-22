@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import html
 import json
+import math
 import re
 import sys
 import unicodedata
@@ -28,6 +29,7 @@ import crossref
 import graph
 import identity
 import quality
+import semanticscholar
 from corpus_contract import normalize
 from db import DB_PATH, connect, set_meta
 from licensing import abstract_decision
@@ -89,6 +91,16 @@ def _is_arxiv_feed(payload: dict) -> bool:
     """
     feed = payload.get("feed")
     return isinstance(feed, dict) and isinstance(feed.get("entry"), list)
+
+
+def _is_semanticscholar_paper(payload: dict) -> bool:
+    """A Semantic Scholar paper envelope: a `paperId` alongside a `references` list.
+
+    No OpenAlex `results` payload, Crossref work envelope, arXiv Atom feed, or
+    Europe PMC `resultList`/`referenceList` payload carries a `paperId`, so
+    none of them satisfies this.
+    """
+    return isinstance(payload.get("paperId"), str) and isinstance(payload.get("references"), list)
 
 
 def _is_europepmc_search(payload: dict) -> bool:
@@ -158,13 +170,14 @@ def _field_keys(observations: list[dict], definitions: dict[str, dict], sha: str
 
 def load(conn) -> dict:
     stats = {"payloads": 0, "works": 0, "authors": 0, "authorships": 0}
-    references: dict[str, list[str]] = {}
-    coci_assertions: list[tuple[str, str]] = []
+    references: list[tuple[str, str, str]] = []
+    coci_assertions: list[tuple[str, str, str]] = []
     crossref_envelopes: list[tuple[str, dict]] = []
-    crossref_reference_assertions: list[tuple[str, str]] = []
-    arxiv_reference_assertions: list[tuple[str, str]] = []
+    crossref_reference_assertions: list[tuple[str, str, str]] = []
+    arxiv_reference_assertions: list[tuple[str, str, str]] = []
+    semanticscholar_reference_assertions: list[tuple[str, str, str]] = []
     europepmc_search_dois: dict[tuple[str, str], str] = {}
-    europepmc_reference_assertions: list[tuple[tuple[str, str], str]] = []
+    europepmc_reference_assertions: list[tuple[tuple[str, str], str, str]] = []
     europepmc_results: list[tuple[str, dict]] = []
     definitions = _load_fields(conn)
 
@@ -181,7 +194,7 @@ def load(conn) -> dict:
         if not isinstance(payload, dict):
             if isinstance(payload, list):
                 coci_assertions.extend(
-                    (obj.get("citing"), obj.get("cited"))
+                    (obj.get("citing"), obj.get("cited"), rec["sha256"])
                     for obj in payload
                     if isinstance(obj, dict)
                 )
@@ -196,7 +209,8 @@ def load(conn) -> dict:
             citing_doi = message.get("DOI")
             if citing_doi:
                 crossref_reference_assertions.extend(
-                    (citing_doi, cited_doi) for cited_doi in crossref.reference_dois(payload)
+                    (citing_doi, cited_doi, rec["sha256"])
+                    for cited_doi in crossref.reference_dois(payload)
                 )
             continue
         # arXiv's Atom feed names each entry's own DOI directly, like Crossref,
@@ -211,7 +225,20 @@ def load(conn) -> dict:
                     continue
                 entry_payload = {"feed": {"entry": [entry]}}
                 arxiv_reference_assertions.extend(
-                    (citing_doi, cited_doi) for cited_doi in arxiv.reference_dois(entry_payload)
+                    (citing_doi, cited_doi, rec["sha256"])
+                    for cited_doi in arxiv.reference_dois(entry_payload)
+                )
+            continue
+        # A Semantic Scholar paper envelope names its own DOI and every
+        # reference's DOI in one payload, like Crossref and arXiv above, so no
+        # key resolution is needed. Reconcile after every OpenAlex work is
+        # inserted below, exactly like those envelopes.
+        if _is_semanticscholar_paper(payload):
+            citing_doi = (payload.get("externalIds") or {}).get("DOI")
+            if citing_doi:
+                semanticscholar_reference_assertions.extend(
+                    (citing_doi, cited_doi, rec["sha256"])
+                    for cited_doi in semanticscholar.reference_dois(payload)
                 )
             continue
         # Europe PMC's DOI search echoes the (source, id) pair its references
@@ -241,7 +268,9 @@ def load(conn) -> dict:
             citing_key = (request.get("source"), request.get("id"))
             for ref in (payload.get("referenceList") or {}).get("reference") or []:
                 if isinstance(ref, dict) and ref.get("doi"):
-                    europepmc_reference_assertions.append((citing_key, ref["doi"]))
+                    europepmc_reference_assertions.append(
+                        (citing_key, ref["doi"], rec["sha256"])
+                    )
             continue
         for obj in payload.get("results") or []:
             if _is_work(obj):
@@ -250,9 +279,10 @@ def load(conn) -> dict:
                     "INSERT OR IGNORE INTO work_corpus_field(work_id, field_key) VALUES(?, ?)",
                     [(wid, field_key) for field_key in _field_keys(observations, definitions, rec["sha256"])],
                 )
-                references[wid] = [
-                    short_id(r) for r in (obj.get("referenced_works") or [])
-                ]
+                references.extend(
+                    (wid, short_id(cited), rec["sha256"])
+                    for cited in (obj.get("referenced_works") or [])
+                )
                 stats["works"] += 1
             elif _is_author(obj):
                 _insert_author(conn, obj, rec["sha256"])
@@ -263,6 +293,7 @@ def load(conn) -> dict:
         conn, references, coci_assertions,
         europepmc_search_dois, europepmc_reference_assertions,
         crossref_reference_assertions, arxiv_reference_assertions,
+        semanticscholar_reference_assertions,
     )
     stats["crossref_assertions"] = _insert_crossref_assertions(conn, crossref_envelopes)
     stats["europepmc_assertions"] = _insert_europepmc_assertions(conn, europepmc_results)
@@ -465,69 +496,89 @@ def _normalized_doi(value: str | None) -> str | None:
         return None
 
 
-def _insert_citations(conn, references: dict[str, list[str]],
-                      coci_assertions: list[tuple[str, str]],
+def _insert_citations(conn, references: list[tuple[str, str, str]],
+                      coci_assertions: list[tuple[str, str, str]],
                       europepmc_search_dois: dict[tuple[str, str], str],
-                      europepmc_reference_assertions: list[tuple[tuple[str, str], str]],
-                      crossref_reference_assertions: list[tuple[str, str]],
-                      arxiv_reference_assertions: list[tuple[str, str]]) -> int:
+                      europepmc_reference_assertions: list[tuple[tuple[str, str], str, str]],
+                      crossref_reference_assertions: list[tuple[str, str, str]],
+                      arxiv_reference_assertions: list[tuple[str, str, str]],
+                      semanticscholar_reference_assertions: list[tuple[str, str, str]]) -> int:
     in_corpus = {r["id"] for r in conn.execute("SELECT id FROM work")}
-    assertions: dict[tuple[str, str], set[str]] = {}
+    assertions: dict[tuple[str, str, str], set[str]] = {}
 
-    for citing, cited_ids in references.items():
-        for cited in cited_ids:
-            if cited in in_corpus and cited != citing:
-                assertions.setdefault((citing, cited), set()).add("openalex")
+    def add(citing: str | None, cited: str | None, source: str, raw_sha: str) -> None:
+        if citing in in_corpus and cited in in_corpus and citing != cited:
+            assertions.setdefault((citing, cited, source), set()).add(raw_sha)
+
+    for citing, cited, raw_sha in references:
+        add(citing, cited, "openalex", raw_sha)
 
     doi_to_work = {}
     for row in conn.execute("SELECT id, doi FROM work ORDER BY id"):
         doi = _normalized_doi(row["doi"])
         if doi:
             doi_to_work.setdefault(doi, row["id"])
-    for citing_doi, cited_doi in coci_assertions:
+    for citing_doi, cited_doi, raw_sha in coci_assertions:
         citing = doi_to_work.get(_normalized_doi(citing_doi))
         cited = doi_to_work.get(_normalized_doi(cited_doi))
-        if citing and cited and citing != cited:
-            assertions.setdefault((citing, cited), set()).add("opencitations")
+        add(citing, cited, "opencitations", raw_sha)
 
     # A Europe PMC references payload names its citing article by (source, id),
     # never by DOI. Resolve that key against the stored search payload's echo
     # of the same pair before it can be joined to the in-corpus DOI index; an
     # unresolved key is dropped silently, exactly as an unknown COCI DOI is.
-    for citing_key, cited_doi in europepmc_reference_assertions:
+    for citing_key, cited_doi, raw_sha in europepmc_reference_assertions:
         citing_doi = europepmc_search_dois.get(citing_key)
         citing = doi_to_work.get(_normalized_doi(citing_doi))
         cited = doi_to_work.get(_normalized_doi(cited_doi))
-        if citing and cited and citing != cited:
-            assertions.setdefault((citing, cited), set()).add("europepmc")
+        add(citing, cited, "europepmc", raw_sha)
 
     # A Crossref work envelope's `reference` array names cited DOIs directly,
     # so no key resolution is needed here, unlike Europe PMC above. Resolve
     # both ends against the same in-corpus DOI index and drop an unresolved
     # DOI or self-pair silently, exactly as COCI and Europe PMC do.
-    for citing_doi, cited_doi in crossref_reference_assertions:
+    for citing_doi, cited_doi, raw_sha in crossref_reference_assertions:
         citing = doi_to_work.get(_normalized_doi(citing_doi))
         cited = doi_to_work.get(_normalized_doi(cited_doi))
-        if citing and cited and citing != cited:
-            assertions.setdefault((citing, cited), set()).add("crossref")
+        add(citing, cited, "crossref", raw_sha)
 
     # An arXiv Atom entry's `references` array names cited DOIs directly, just
     # like Crossref's `reference` array. Resolve both ends against the same
     # in-corpus DOI index and drop an unresolved DOI or self-pair silently.
-    for citing_doi, cited_doi in arxiv_reference_assertions:
+    for citing_doi, cited_doi, raw_sha in arxiv_reference_assertions:
         citing = doi_to_work.get(_normalized_doi(citing_doi))
         cited = doi_to_work.get(_normalized_doi(cited_doi))
-        if citing and cited and citing != cited:
-            assertions.setdefault((citing, cited), set()).add("arxiv")
+        add(citing, cited, "arxiv", raw_sha)
 
+    # A Semantic Scholar paper envelope's `references` array names cited DOIs
+    # directly, just like Crossref's `reference` array and arXiv's `references`
+    # array. Resolve both ends against the same in-corpus DOI index and drop
+    # an unresolved DOI or self-pair silently.
+    for citing_doi, cited_doi, raw_sha in semanticscholar_reference_assertions:
+        citing = doi_to_work.get(_normalized_doi(citing_doi))
+        cited = doi_to_work.get(_normalized_doi(cited_doi))
+        add(citing, cited, "semanticscholar", raw_sha)
+
+    assertion_rows = [
+        (citing, cited, source, min(raw_shas))
+        for (citing, cited, source), raw_shas in sorted(assertions.items())
+    ]
+    sources_by_edge: dict[tuple[str, str], list[str]] = {}
+    for citing, cited, source, _ in assertion_rows:
+        sources_by_edge.setdefault((citing, cited), []).append(source)
     rows = [
-        (citing, cited, graph.encode_sources(list(sources)))
-        for (citing, cited), sources in sorted(assertions.items())
+        (citing, cited, graph.encode_sources(sources))
+        for (citing, cited), sources in sorted(sources_by_edge.items())
     ]
     conn.executemany(
         "INSERT INTO citation(citing_id, cited_id, sources) VALUES(?,?,?) "
         "ON CONFLICT(citing_id, cited_id) DO UPDATE SET sources=excluded.sources",
         rows,
+    )
+    conn.executemany(
+        "INSERT INTO citation_assertion(citing_id, cited_id, source, raw_sha) VALUES(?,?,?,?) "
+        "ON CONFLICT(citing_id, cited_id, source) DO UPDATE SET raw_sha=excluded.raw_sha",
+        assertion_rows,
     )
     return conn.execute("SELECT COUNT(*) c FROM citation").fetchone()["c"]
 
@@ -840,6 +891,117 @@ def combined_comparison_status(statuses: list[str]) -> str:
     if not comparable:
         return "unavailable"
     return "agree" if all(s == "agree" for s in comparable) else "disagree"
+
+
+# This is an export-only honesty signal, deliberately separate from
+# `score_quality`: a selected corpus cannot establish that a citation count is
+# wrong, only that it is unusually high beside its exact peers in this corpus.
+CITATION_OUTLIER_MIN_PEERS = 8
+CITATION_OUTLIER_OUTER_FENCE_MULTIPLIER = 3
+CITATION_OUTLIER_MEDIAN_MULTIPLIER = 5
+CITATION_OUTLIER_SELECTED_CORPUS_BASIS = (
+    "Relative only to selected corpus peers with the same OpenAlex publication "
+    "year and stable venue source ID; it is not a population estimate."
+)
+
+
+def _quantile(values: list[float], fraction: float) -> float:
+    """A deterministic linear-interpolated quantile for already sorted values."""
+    position = (len(values) - 1) * fraction
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return values[lower]
+    return values[lower] + (values[upper] - values[lower]) * (position - lower)
+
+
+def _median(values: list[int]) -> float:
+    middle = len(values) // 2
+    if len(values) % 2:
+        return values[middle]
+    return (values[middle - 1] + values[middle]) / 2
+
+
+def _citation_count_outlier(work, peer_counts: list[int]) -> dict | None:
+    """Return conservative selected-corpus evidence for one work, or None.
+
+    Counts are compared on a log1p scale because citation counts are skewed.
+    This only reads the supplied values and intentionally does not feed the
+    quality scorer or modify any stored work record.
+    """
+    if len(peer_counts) < CITATION_OUTLIER_MIN_PEERS:
+        return None
+
+    peer_counts = sorted(peer_counts)
+    observed = work["cited_by_count"]
+    peer_median = _median(peer_counts)
+    log_counts = [math.log1p(count) for count in peer_counts]
+    q1 = _quantile(log_counts, 0.25)
+    q3 = _quantile(log_counts, 0.75)
+    log1p_upper_outer_fence = math.expm1(
+        q3 + CITATION_OUTLIER_OUTER_FENCE_MULTIPLIER * (q3 - q1)
+    )
+    five_times_peer_median = peer_median * CITATION_OUTLIER_MEDIAN_MULTIPLIER
+    effective_threshold = max(log1p_upper_outer_fence, five_times_peer_median)
+
+    # Both guards are intentionally strict: a count on a fence is not an
+    # outlier, and a lower value is never evaluated as an upper outlier.
+    if (
+        observed <= peer_median
+        or observed <= log1p_upper_outer_fence
+        or observed <= five_times_peer_median
+    ):
+        return None
+
+    return {
+        "basis": CITATION_OUTLIER_SELECTED_CORPUS_BASIS,
+        "observed_openalex_citation_count": observed,
+        "year": work["year"],
+        "venue": {"id": work["source_id"], "name": work["source_name"]},
+        "peer_count": len(peer_counts),
+        "peer_median": peer_median,
+        "log1p_upper_outer_fence": log1p_upper_outer_fence,
+        "five_times_peer_median": five_times_peer_median,
+        "effective_threshold": effective_threshold,
+    }
+
+
+def citation_count_outlier(conn, work) -> dict | None:
+    """Read one work's exact year-and-venue selected-corpus cohort.
+
+    This helper is intentionally read-only so export can derive the evidence
+    without changing source counts, quality evidence, or quality bands.
+    """
+    if work["year"] is None or work["source_id"] is None:
+        return None
+    peers = [
+        row["cited_by_count"]
+        for row in conn.execute(
+            "SELECT cited_by_count FROM work "
+            "WHERE year = ? AND source_id = ? AND id != ? ORDER BY cited_by_count, id",
+            (work["year"], work["source_id"], work["id"]),
+        )
+    ]
+    return _citation_count_outlier(work, peers)
+
+
+def citation_count_outliers(conn) -> dict[str, dict]:
+    """Derive every exportable citation-count outlier without database writes."""
+    cohorts: dict[tuple[int, str], list] = {}
+    for row in conn.execute(
+        "SELECT id, year, source_id, source_name, cited_by_count FROM work "
+        "WHERE year IS NOT NULL AND source_id IS NOT NULL ORDER BY year, source_id, id"
+    ):
+        cohorts.setdefault((row["year"], row["source_id"]), []).append(row)
+
+    outliers = {}
+    for works in cohorts.values():
+        for work in works:
+            peers = [peer["cited_by_count"] for peer in works if peer["id"] != work["id"]]
+            evidence = _citation_count_outlier(work, peers)
+            if evidence is not None:
+                outliers[work["id"]] = evidence
+    return outliers
 
 
 def score_quality(conn) -> dict[str, int]:

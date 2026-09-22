@@ -95,7 +95,10 @@
         if (query !== normalized(box.value.trim())) return;
         render(rows.filter(function (row) {
           return normalized(row.label).indexOf(query) >= 0 ||
-            normalized(row.id).indexOf(query) >= 0;
+            normalized(row.id).indexOf(query) >= 0 ||
+            (row.aliases || []).some(function (alias) {
+              return normalized(alias).indexOf(query) >= 0;
+            });
         }));
       }).catch(function () {
         if (query === normalized(box.value.trim())) {

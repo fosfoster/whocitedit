@@ -34,7 +34,8 @@ def main() -> int:
                  "container-title was not derived from the source name")
     bad += check(item["DOI"] == "10.1000/example",
                  "a doi.org URL was not reduced to a bare DOI")
-    bad += check(item["type"] == "article", "type was not carried over")
+    bad += check(item["type"] == "article-journal",
+                 "type was not mapped through the CSL vocabulary")
 
     year_only = {
         "id": "W2",
@@ -61,12 +62,14 @@ def main() -> int:
         "authors": [],
     }
     item = render.work_csl_json(sparse)
-    bad += check("type" not in item, "an absent type was not omitted")
+    bad += check(item["type"] == "document",
+                 "an absent type did not fall back to the CSL document type")
     bad += check("author" not in item, "an absent author list was not omitted")
     bad += check("issued" not in item, "an absent date and year did not omit issued")
     bad += check("container-title" not in item, "an absent source name was not omitted")
     bad += check("DOI" not in item, "an absent doi was not omitted")
-    bad += check(item == {"id": "W3"}, "a fully sparse work emitted unexpected fields")
+    bad += check(item == {"id": "W3", "type": "document"},
+                 "a fully sparse work emitted unexpected fields")
 
     print("test_csl_json_fields:", "FAILED" if bad else "ok")
     return 1 if bad else 0
