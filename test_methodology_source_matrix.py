@@ -121,8 +121,9 @@ def write_fixture(data):
 
 
 def cell_count(cell):
-    """The integer in a count cell, whose number may be wrapped in a cohort link."""
-    return int(re.sub(r"<[^>]+>", "", cell).replace(",", ""))
+    """The integer in a count cell, which the disagreement column links to its cohort."""
+    link = re.fullmatch(r'<a href="[^"]+">([\d,]+)</a>', cell)
+    return int((link.group(1) if link else cell).replace(",", ""))
 
 
 def matrix_rows(html):

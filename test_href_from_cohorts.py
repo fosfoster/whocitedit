@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Every disagreement cell on the methodology page links to the cohort page named
-by SOURCE_DISAGREEMENT_COHORTS, not by a second mapping or a hardcoded string."""
+"""Every disagreement cell on the methodology page carries the href the
+cohort-to-href helper computes from that row's SOURCE_DISAGREEMENT_COHORTS
+entry -- not a second mapping, and not a string written out beside it."""
 import re
 import shutil
 import sys
@@ -35,45 +36,80 @@ def disagreement_cells(html):
     }
 
 
+def cell_href(cell):
+    """The href a disagreement cell carries, or None when it carries no link."""
+    link = re.fullmatch(r'<a href="([^"]*)">[\d,]+</a>', cell or "")
+    return link.group(1) if link else None
+
+
+def render_cells(site):
+    """Render the synthetic corpus into `site`; return its methodology page and cells."""
+    render.SITE = site
+    rendered = render.main()
+    page = site / "methodology" / "index.html"
+    html = page.read_text() if page.exists() else ""
+    return rendered, page, disagreement_cells(html)
+
+
 def main():
     bad = 0
     temporary = Path(tempfile.mkdtemp())
     saved = render.DATA, render.SITE, render.ASSETS, render.NAV_FIELDS
+    cohorts = dict(render.SOURCE_DISAGREEMENT_COHORTS)
+    helper = getattr(render, "href_for_disagreement_cohort", None)
     try:
         data = temporary / "data"
         write_fixture(data)
         render.DATA = data
-        render.SITE = temporary / "site"
         render.ASSETS = Path(__file__).parent / "web" / "assets"
-        bad += check(render.main() == 0, "synthetic render failed")
 
-        page = render.SITE / "methodology" / "index.html"
-        html = page.read_text() if page.exists() else ""
-        cells = disagreement_cells(html)
+        bad += check(callable(helper),
+                     "render exposes no cohort-to-href helper to compute these cells with")
+        rendered, page, cells = render_cells(temporary / "site")
+        bad += check(rendered == 0, "synthetic render failed")
         bad += check(cells is not None, "methodology has no source-field comparison table")
         cells = cells or {}
-        bad += check(len(cells) == 6, f"methodology renders {len(cells)} source-field rows, expected six")
+        bad += check(len(cells) == len(cohorts),
+                     f"methodology renders {len(cells)} source-field rows, expected {len(cohorts)}")
 
-        for (field, source), config in render.SOURCE_DISAGREEMENT_COHORTS.items():
-            row = (config["source_label"], config["field_label"])
-            cell = cells.get(row)
+        for (field, source), config in cohorts.items():
+            cell = cells.get((config["source_label"], config["field_label"]))
             bad += check(cell is not None, f"methodology has no {source} {field} row")
             if cell is None:
                 continue
-            link = re.fullmatch(r'<a href="([^"]*)">([\d,]+)</a>', cell)
-            bad += check(link is not None,
+            href = cell_href(cell)
+            bad += check(href is not None,
                          f"the {source} {field} disagreement cell carries no href: {cell!r}")
-            if link is None:
+            if href is None:
                 continue
-            expected = f'../{config["path"]}'
-            bad += check(link.group(1) == expected,
-                         f"the {source} {field} disagreement cell links to {link.group(1)!r}, "
-                         f"but SOURCE_DISAGREEMENT_COHORTS names {expected!r}")
-            destination = page.parent / expected / "index.html"
-            bad += check(destination.is_file(),
-                         f"the {source} {field} disagreement cell links to {expected!r}, "
+            entry = f'../{config["path"]}'
+            bad += check(href == entry,
+                         f"the {source} {field} disagreement cell links to {href!r}, "
+                         f"but SOURCE_DISAGREEMENT_COHORTS names {entry!r}")
+            if callable(helper):
+                bad += check(helper(field, source) == href,
+                             f"the {source} {field} disagreement cell links to {href!r}, "
+                             f"but the helper computes {helper(field, source)!r}")
+            bad += check((page.parent / href / "index.html").is_file(),
+                         f"the {source} {field} disagreement cell links to {href!r}, "
                          "which is not generated")
+
+        # Computed, not transcribed: move one entry's path and its cell has to
+        # follow. Same depth, so the cohort page's own relative links still hold.
+        moved = ("title", "crossref")
+        relocated = dict(cohorts[moved], path="works/title-disagreement/crossref-elsewhere/")
+        render.SOURCE_DISAGREEMENT_COHORTS[moved] = relocated
+        _, page, cells = render_cells(temporary / "relocated")
+        cell = (cells or {}).get((relocated["source_label"], relocated["field_label"]))
+        href = cell_href(cell)
+        bad += check(href == f'../{relocated["path"]}',
+                     f"after moving the {moved[1]} {moved[0]} cohort its cell links to {href!r}, "
+                     f"not to the relocated '../{relocated['path']}'")
+        bad += check(href is not None and (page.parent / href / "index.html").is_file(),
+                     "the relocated cohort page is not generated where its cell points")
     finally:
+        render.SOURCE_DISAGREEMENT_COHORTS.clear()
+        render.SOURCE_DISAGREEMENT_COHORTS.update(cohorts)
         render.DATA, render.SITE, render.ASSETS, render.NAV_FIELDS = saved
         shutil.rmtree(temporary, ignore_errors=True)
 
